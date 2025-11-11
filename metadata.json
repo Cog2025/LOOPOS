@@ -1,0 +1,5 @@
+{
+  "name": "Sistema de Gestão de Ordens de Serviço Fotovoltaica",
+  "description": "Uma aplicação completa para cadastro e acompanhamento de ordens de serviço para usinas fotovoltaicas, inspirada no Fracttal. Inclui um painel Kanban, gestão de usuários com diferentes níveis de acesso, cadastro de usinas, técnicos, supervisores e ativos.",
+  "requestFramePermissions": []
+}
