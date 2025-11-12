@@ -1,117 +1,98 @@
 // File: components/modals/ManagementModal.tsx
-// Este modal serve como uma interface de gerenciamento genérica para listar e editar
-// diferentes tipos de dados (usuários e usinas). A correção abaixo monta apenas a seção
-// ativa (lista OU formulário) por vez e usa keys estáveis para evitar remount que faz
-// inputs perderem o foco ao digitar.
+// Este componente é um modal genérico de gerenciamento (usuários e usinas).
+// Ele pode exibir listas para gerenciar dados ou abrir formulários específicos
+// de criação/edição (UserForm e PlantForm) dentro do próprio modal.
 
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
 import { User, Plant, Role } from '../../types';
 import UserForm from './UserForm';
 import PlantForm from './PlantForm';
-import Portal from '../Portal'; // ajuste o caminho se necessário
+import Portal from '../Portal';
 
-// Define as propriedades que o modal de gerenciamento espera receber.
+// Define as props do modal de gerenciamento
 interface ManagementModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  // `config` determina o que o modal está gerenciando no momento (usuários/usinas)
-  // ou se deve abrir o formulário de edição/criação correspondente.
+  isOpen: boolean; // Controla abertura/fechamento do modal
+  onClose: () => void; // Função chamada ao fechar o modal
   config: {
-    // Estados principais de lista
-    type: 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM';
-    data?: {
-      // Para MANAGE_USERS: define quais funções serão listadas e o título
-      roles?: Role[];
-      title?: string;
-      // Para USER_FORM: dados do usuário selecionado e config para voltar
-      user?: User;
-      role?: Role;
-      // Para PLANT_FORM: dados da usina selecionada e config para voltar
-      plant?: Plant;
-      // Guarda a configuração anterior para retorno ao fechar o formulário
-      parentConfig?: any;
+    type: 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM'; // Define qual tela ou formulário exibir
+    data?: { // Dados extras para formularios ou listas
+      roles?: Role[]; // Filtra usuários por função
+      title?: string; // Título da lista
+      user?: User; // Usuário a ser editado (se for form de usuário)
+      role?: Role; // Função pré-selecionada ao criar um usuário
+      plant?: Plant; // Usina a ser editada (se for form de planta)
+      parentConfig?: any; // Permite voltar para a configuração anterior ao fechar formulário
     };
   };
-  // Função para alterar a configuração do modal (navegar entre lista e formulários)
-  setModalConfig: (config: any) => void;
+  setModalConfig: (config: any) => void; // Função para mudar a configuração atual do modal
 }
 
 const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, config, setModalConfig }) => {
-  // Acessa os dados globais.
-  const { users, plants } = useData();
+  const { users, plants } = useData(); // Obtém usuários e plantas do contexto
+  const isManagingUsers = config.type === 'MANAGE_USERS'; // Flag para saber se estamos gerenciando usuários
 
-  // Determina se o modal está gerenciando usuários ou usinas com base na configuração.
-  const isManagingUsers = config.type === 'MANAGE_USERS';
-  // Define o título do modal dinamicamente.
-    const title = config.type === 'USER_FORM'
-    ? (config.data?.user ? `Editar Usuário: ${config.data.user.name}` : 'Novo Usuário')
-    : config.type === 'PLANT_FORM'
-        ? (config.data?.plant ? `Editar Usina: ${config.data.plant.name}` : 'Nova Usina')
+  // --- título estável do modal ---
+  // Define o título baseado no tipo de tela
+  const title =
+    config.type === 'USER_FORM'
+      ? config.data?.user ? `Editar Usuário: ${config.data.user.name}` : 'Novo Usuário'
+      : config.type === 'PLANT_FORM'
+        ? config.data?.plant ? `Editar Usina: ${config.data.plant.name}` : 'Nova Usina'
         : isManagingUsers
-        ? `Gerenciar ${config.data?.title}`
-        : 'Gerenciar Usinas';
+          ? `Gerenciar ${config.data?.title}` // Lista de usuários
+          : 'Gerenciar Usinas'; // Lista de usinas
 
-    // ADICIONADO: título estável para esta sessão do modal
-    // Motivo: evita re-render do cabeçalho enquanto digita no formulário.
-    const stableModalTitleRef = React.useRef(title);
-    // Atualiza o título fixo somente quando a “tela” muda (lista ↔ formulário).
-    React.useEffect(() => {
-        stableModalTitleRef.current = title;
-    }, [config.type]);
+  // Mantém o título estável entre renders para evitar flicker
+  const stableTitleRef = useRef(title);
+  useEffect(() => {
+    stableTitleRef.current = title;
+    console.log(`🪶 [ManagementModal] Tela mudou → ${config.type}`);
+  }, [config.type]);
 
-  // Filtra a lista de itens a serem exibidos com base na configuração.
+  // --- dados da lista ---
+  // Filtra os itens da lista conforme o tipo de gerenciamento
   const items = isManagingUsers
     ? users.filter(u => (config.data?.roles || []).includes(u.role))
     : plants;
 
-  // Função chamada ao clicar no botão "Adicionar Novo..."
+  // --- ações ---
+  // Função para abrir um novo formulário de criação
   const handleAddItem = () => {
     if (isManagingUsers) {
-      // Abre o formulário de usuário, pré-selecionando a função correta.
       setModalConfig({
         type: 'USER_FORM',
         data: {
-          role: config.data?.roles?.[0],
-          parentConfig: config // Salva a config atual para poder voltar a ela.
+          role: config.data?.roles?.[0], // Pré-seleciona a primeira função disponível
+          parentConfig: config // Permite voltar para a lista depois
         }
       });
     } else {
-      // Abre o formulário de usina.
       setModalConfig({
         type: 'PLANT_FORM',
-        data: {
-          parentConfig: config
-        }
+        data: { parentConfig: config } // Volta para lista de usinas
       });
     }
   };
 
-  // Função chamada ao clicar no botão "Editar" de um item.
+  // Função para abrir formulário de edição de item existente
   const handleEditItem = (item: User | Plant) => {
     if (isManagingUsers) {
-      // Abre o formulário de usuário com os dados do usuário selecionado.
       setModalConfig({
         type: 'USER_FORM',
-        data: {
-          user: item as User,
-          parentConfig: config
-        }
+        data: { user: item as User, parentConfig: config }
       });
     } else {
-      // Abre o formulário de usina com os dados da usina selecionada.
       setModalConfig({
         type: 'PLANT_FORM',
-        data: {
-          plant: item as Plant,
-          parentConfig: config
-        }
+        data: { plant: item as Plant, parentConfig: config }
       });
     }
   };
 
-  // Renderização de linha para usuário (lista)
+  // --- renderização das linhas da lista ---
+  // Linha de usuário na lista
   const renderUserRow = (user: User) => (
     <div key={user.id} className="flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
       <div>
@@ -122,7 +103,7 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
     </div>
   );
 
-  // Renderização de linha para usina (lista)
+  // Linha de usina na lista
   const renderPlantRow = (plant: Plant) => (
     <div key={plant.id} className="flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
       <div>
@@ -133,60 +114,82 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
     </div>
   );
 
-  // Key estável para a “tela” ativa dentro do modal (lista, user form, plant form).
-  // Importante: esta key só muda quando troca de tela ou de registro, não ao digitar.
+  // --- chave única para cada "tela" do modal ---
   const screenKey =
     config.type === 'USER_FORM'
-      ? (config.data?.user?.id ?? 'new-user')
+      ? config.data?.user?.id ?? 'new-user'
       : config.type === 'PLANT_FORM'
-        ? (config.data?.plant?.id ?? 'new-plant')
+        ? config.data?.plant?.id ?? 'new-plant'
         : 'list';
 
-return (
-  <Modal
-    isOpen={isOpen}
-    onClose={onClose}
-    title={stableModalTitleRef.current}
-    footer={
-      (config.type === 'MANAGE_USERS' || config.type === 'MANAGE_PLANTS') ? (
-        <button onClick={handleAddItem} className="btn-primary">
-          {isManagingUsers ? `Novo ${config.data?.title?.slice(0, -1) || 'Usuário'}` : 'Nova Usina'}
-        </button>
-      ) : undefined
-    }
-  >
-    <div key={screenKey} className="contents">
-      {(config.type === 'MANAGE_USERS' || config.type === 'MANAGE_PLANTS') ? (
-        <div className="space-y-2 max-h-96 overflow-y-auto">
-          {items.length > 0 ? (
-            items.map(item => isManagingUsers ? renderUserRow(item as User) : renderPlantRow(item as Plant))
-          ) : (
-            <p className="text-center text-gray-500 p-4">Nenhum item encontrado.</p>
-          )}
-        </div>
-      ) : config.type === 'USER_FORM' ? (
-        <Portal>
+  // --- componente de formulário ativo ---
+  // Decide qual formulário renderizar (UserForm ou PlantForm)
+  const ActiveForm = () => {
+    if (config.type === 'USER_FORM') {
+      console.log(`🧩 Renderizando UserForm (${config.data?.user ? 'editando' : 'novo'})`);
+      return (
+        <Portal key={`user-${config.data?.user?.id ?? 'new'}`}>
           <UserForm
-            key={config.data?.user?.id ?? 'new-user'}
-            isOpen={true}
-            onClose={() => setModalConfig(config.data?.parentConfig)}
+            isOpen
+            onClose={() => setModalConfig(config.data?.parentConfig)} // volta para lista após fechar
             initialData={config.data?.user}
             role={config.data?.role}
           />
         </Portal>
-      ) : config.type === 'PLANT_FORM' ? (
-        <Portal>
+      );
+    }
+    if (config.type === 'PLANT_FORM') {
+      console.log(`🌿 Renderizando PlantForm (${config.data?.plant ? 'editando' : 'nova'})`);
+      return (
+        <Portal key={`plant-${config.data?.plant?.id ?? 'new'}`}>
           <PlantForm
-            key={config.data?.plant?.id ?? 'new-plant'}
-            isOpen={true}
-            onClose={() => setModalConfig(config.data?.parentConfig)}
+            isOpen
+            onClose={() => setModalConfig(config.data?.parentConfig)} // volta para lista após fechar
             initialData={config.data?.plant}
           />
         </Portal>
-      ) : null}
-    </div>
-  </Modal>
-);
+      );
+    }
+    return null; // Nenhum formulário ativo
+  };
+
+  // --- render principal ---
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={stableTitleRef.current} // título estável
+      footer={
+        // Botão "Adicionar Novo" apenas em telas de gerenciamento de listas
+        (config.type === 'MANAGE_USERS' || config.type === 'MANAGE_PLANTS') && (
+          <button onClick={handleAddItem} className="btn-primary">
+            {isManagingUsers ? `Novo ${config.data?.title?.slice(0, -1) || 'Usuário'}` : 'Nova Usina'}
+          </button>
+        )
+      }
+    >
+      {React.useMemo(() => (
+        <>
+          {/* Lista de itens (usuários ou usinas) */}
+          {(config.type === 'MANAGE_USERS' || config.type === 'MANAGE_PLANTS') ? (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {items.length > 0
+                ? items.map(item =>
+                    isManagingUsers
+                      ? renderUserRow(item as User)
+                      : renderPlantRow(item as Plant)
+                  )
+                : <p className="text-center text-gray-500 p-4">Nenhum item encontrado.</p>}
+            </div>
+          ) : null}
+
+          {/* Formulário ativo — permanece montado enquanto digita */}
+          <ActiveForm />
+        </>
+      ), [config.type, items])}
+    </Modal>
+  );
 };
 
+// Evita re-render desnecessário do modal
 export default React.memo(ManagementModal);

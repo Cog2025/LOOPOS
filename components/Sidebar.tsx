@@ -56,7 +56,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, setMobileOpen, isCollap
             {/* Cabeçalho da Sidebar com o logo e nome do sistema */}
             <div className="flex items-center justify-center p-4 border-b dark:border-gray-700">
                 <svg xmlns="http://www.w3.org/2000/svg" className={`h-8 w-8 text-blue-500 transition-transform duration-300 ${isCollapsed ? 'rotate-12' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
-                {!isCollapsed && <h1 className="ml-2 text-xl font-bold">OS Manager</h1>}
+                {!isCollapsed && <h1 className="ml-2 text-xl font-bold">LOOP.OS Manager</h1>}
             </div>
             {/* Navegação Principal */}
             <nav className="flex-1 px-2 py-4 space-y-2">
