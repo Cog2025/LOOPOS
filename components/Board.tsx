@@ -4,7 +4,7 @@
 
 import React from 'react';
 // Importa os componentes e tipos necessários da biblioteca de drag-and-drop.
-import { DragDropContext, DropResult } from 'react-beautiful-dnd';
+import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import { OS, OSStatus } from '../types';
 import Column from './Column';
 // Importa constantes usadas para os títulos das colunas e a ordem dos status.

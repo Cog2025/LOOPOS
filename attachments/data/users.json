@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Administrador",
+    "username": "admin",
+    "email": "cog@loopservices.com.br",
+    "phone": "41 9833-0048",
+    "role": "Admin",
+    "can_login": true,
+    "supervisorId": "",
+    "password": "admin",
+    "id": "fd3c0ffa-fe32-4c58-8242-1739f771a058",
+    "plantIds": []
+  },
+  {
+    "name": "Fabio",
+    "username": "fabio",
+    "email": "cog@loopservices.com.br",
+    "phone": "41999999999",
+    "role": "Operador",
+    "can_login": true,
+    "supervisorId": "",
+    "password": "123",
+    "id": "75b2a495-f9ea-41ed-a33e-227eb81754d1",
+    "plantIds": []
+  }
+]

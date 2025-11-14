@@ -4,13 +4,25 @@
 // Para usuários, mantém a lista/edição como já existente.
 
 import React, { useRef, useEffect } from 'react';
+import { canViewUser, canEditUser, canViewPlant, canEditPlant } from '../utils/rbac';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { User, Plant, Role } from '../../types';
 import UserForm from './UserForm';
 import PlantForm from './PlantForm';
 import Portal from '../Portal';
 import PlantList from '../PlantList'; // Lista hierárquica: Cliente → Usinas (com botões)
+
+const ROLE_SINGULAR: Record<Role, string> = {
+  [Role.ADMIN]: 'Admin',
+  [Role.COORDINATOR]: 'Coordenador',
+  [Role.SUPERVISOR]: 'Supervisor',
+  [Role.OPERATOR]: 'Operador',
+  [Role.TECHNICIAN]: 'Técnico',
+  [Role.ASSISTANT]: 'Auxiliar',
+};
+
 
 interface ManagementModalProps {
   isOpen: boolean;
@@ -31,8 +43,21 @@ interface ManagementModalProps {
 }
 
 const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, config, setModalConfig }) => {
-  const { users } = useData();
+  const { users } = useData();                               // sem currentUser aqui
+  const { user: currentUser } = useAuth();                   // <— PEGUE AQUI
+  const actor = (currentUser ?? {                            // <— Fallback seguro
+    id: 'anon', name: '—', username: 'anon',
+    role: Role.OPERATOR, plantIds: []
+  } as unknown as User);
+
   const isManagingUsers = config.type === 'MANAGE_USERS';
+
+  // dentro do componente ManagementModal, após calcular isManagingUsers
+  const getSingular = () => {
+    const r = config.data?.roles?.[0];
+    return r ? ROLE_SINGULAR[r] : 'Usuário';
+  };
+
 
   // --- título estável do modal ---
   const title =
@@ -53,7 +78,7 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
 
   // --- dados (apenas para MANAGE_USERS; plantas são renderizadas pelo PlantList) ---
   const items = isManagingUsers
-    ? users.filter(u => (config.data?.roles || []).includes(u.role))
+    ? users.filter(u => canViewUser(actor, u))
     : [];
 
   // --- ações padrão ---
@@ -94,7 +119,13 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
         <p className="font-semibold">{user.name}</p>
         <p className="text-sm text-gray-500">{user.email}</p>
       </div>
-      <button onClick={() => handleEditItem(user)} className="btn-secondary text-sm">Editar</button>
+      <button
+        onClick={() => handleEditItem(user)}
+        className="btn-secondary text-sm"
+        disabled={!canEditUser(actor, user)}                  // <— use actor aqui
+      >
+        Editar
+      </button>
     </div>
   );
 
@@ -135,7 +166,7 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
       footer={
         (config.type === 'MANAGE_USERS' || config.type === 'MANAGE_PLANTS') && (
           <button onClick={handleAddItem} className="btn-primary">
-            {isManagingUsers ? `Novo ${config.data?.title?.slice(0, -1) || 'Usuário'}` : 'Nova Usina'}
+            {isManagingUsers ? `Novo ${getSingular()}` : 'Nova Usina'}
           </button>
         )
       }

@@ -3,7 +3,7 @@
 
 import React from 'react';
 // Importa os componentes `Droppable` e `Draggable` da biblioteca de drag-and-drop.
-import { Droppable, Draggable } from 'react-beautiful-dnd';
+import { Droppable, Draggable } from '@hello-pangea/dnd';
 import { OS, OSStatus } from '../types';
 import Card from './Card';
 // Importa as constantes de cores para estilizar o cabeçalho da coluna.

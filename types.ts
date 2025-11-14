@@ -3,13 +3,28 @@
 
 // Define os diferentes níveis de acesso (funções) dos usuários no sistema.
 export enum Role {
-  ADMIN = 'ADMIN',
-  SUPERVISOR = 'SUPERVISOR',
-  TECHNICIAN = 'TECHNICIAN',
-  OPERATOR = 'OPERATOR',
-  COORDINATOR = 'COORDINATOR', // NOVO
-  ASSISTANT = 'ASSISTANT',     // NOVO (Auxiliar; pode não ter login)
+  ADMIN = "Admin",
+  COORDINATOR = "Coordenador",
+  SUPERVISOR = "Supervisor",
+  OPERATOR = "Operador",
+  TECHNICIAN = "Técnico",
+  ASSISTANT = "Auxiliar",
 }
+
+// Interface para a estrutura de um objeto de Usuário.
+export interface User {
+    id: string; // Identificador único.
+    name: string; // Nome completo.
+    username: string; // login sem e-mail
+    email?: string; //Opcional
+    phone: string; // Telefone de contato.
+    role: Role; // Nível de acesso.
+    can_login?: boolean;
+    supervisorId?: string; // ID do supervisor responsável (apenas para técnicos).
+    password?: string; // Senha (opcional para não ser exposta no frontend).
+    plantIds?: string[]; // IDs das usinas às quais o usuário está associado.
+}
+
 
 // Define os possíveis status de uma Ordem de Serviço (OS), representando as colunas no painel Kanban.
 export enum OSStatus {
@@ -25,18 +40,6 @@ export enum Priority {
     MEDIUM = 'Média',
     HIGH = 'Alta',
     URGENT = 'Urgente',
-}
-
-// Interface para a estrutura de um objeto de Usuário.
-export interface User {
-    id: string; // Identificador único.
-    name: string; // Nome completo.
-    email: string; // Email para login.
-    phone: string; // Telefone de contato.
-    role: Role; // Nível de acesso.
-    password?: string; // Senha (opcional para não ser exposta no frontend).
-    plantIds?: string[]; // IDs das usinas às quais o usuário está associado.
-    supervisorId?: string; // ID do supervisor responsável (apenas para técnicos).
 }
 
 // Interface para uma Sub-usina dentro de uma Usina.

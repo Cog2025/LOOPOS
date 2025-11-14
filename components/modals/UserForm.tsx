@@ -15,7 +15,8 @@ const FormField: React.FC<{label: string, children: React.ReactNode, className?:
   </div>
 );
 
-const inputClasses = "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-gray-100 caret-blue-600";
+const inputClasses =
+  "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 text-gray-900 dark:text-gray-100 caret-blue-600";
 
 interface UserFormProps {
   isOpen: boolean;
@@ -27,13 +28,15 @@ interface UserFormProps {
 // Cria tipo para facilitar o estado do formulário sem Partial
 type UserFormData = {
   name: string;
-  email: string;
+  username: string;         // login (ex.: Fabio)
+  email?: string;           // opcional
   phone: string;
   password: string;
   role: Role;
   plantIds: string[];
   supervisorId: string;
 };
+
 
 const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role }) => {
   // Acessa os dados e funções do DataContext.
@@ -50,6 +53,7 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
     if (initialData) {
       return {
         name: initialData.name,
+        username: initialData.username,
         email: initialData.email,
         phone: initialData.phone,
         password: '',
@@ -60,10 +64,11 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
     }
     return {
       name: '',
-      email: '',
+      username: '',
+      email: undefined,
       phone: '',
       password: '',
-      role: role || Role.OPERATOR,
+      role: role || Role.OPERATOR, // “Operador”
       plantIds: [],
       supervisorId: ''
     };
@@ -82,26 +87,30 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
   // Filtra a lista de usuários para obter apenas os supervisores, para o dropdown.
   const supervisors = users.filter(u => u.role === Role.SUPERVISOR);
 
+  
+  // Mudança geral + normalização de username
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    const v = name === 'username' ? value.toLowerCase() : value;
+    setFormData(prev => ({ ...prev, [name]: v }));
   };
 
+  // Seleção de usinas
   const handlePlantChange = (plantId: string) => {
     setFormData(prev => {
-      const currentPlantIds = prev.plantIds;
-      const newPlantIds = currentPlantIds.includes(plantId)
-        ? currentPlantIds.filter(id => id !== plantId)
-        : [...currentPlantIds, plantId];
-      return { ...prev, plantIds: newPlantIds };
+      const current = prev.plantIds;
+      const plantIds = current.includes(plantId)
+        ? current.filter(id => id !== plantId)
+        : [...current, plantId];
+      return { ...prev, plantIds };
     });
   };
 
+  // Submit
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const { name, email, phone, password, role: formRole } = formData;
-
-    if (!name || !email || !phone || (!isEditing && !password) || !formRole) {
+    const { name, username, phone, password, role: formRole } = formData;
+    if (!name || !username || !phone || (!isEditing && !password) || !formRole) {
       alert('Por favor, preencha todos os campos obrigatórios.');
       return;
     }
@@ -124,38 +133,92 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
       footer={
         <>
           <button onClick={onClose} className="btn-secondary">Cancelar</button>
-          {/* Removido onClick duplicado; manter apenas type="submit" + form para evitar interferir no foco */}
           <button type="submit" form="user-form" className="btn-primary ml-3">Salvar</button>
         </>
       }
     >
       <form id="user-form" onSubmit={handleSubmit} className="space-y-4">
         <FormField label="Nome Completo">
-          <input type="text" name="name" value={formData.name} onChange={handleChange} required className={inputClasses} />
+          <input
+            type="text"
+            name="name"
+            value={formData.name}
+            onChange={handleChange}
+            required
+            className={inputClasses}
+          />
         </FormField>
 
         <div className="grid grid-cols-2 gap-4">
-          <FormField label="Email">
-            <input type="email" name="email" value={formData.email} onChange={handleChange} required className={inputClasses} />
+          <FormField label="Usuário">
+            <input
+              type="text"
+              name="username"
+              value={formData.username}
+              onChange={handleChange}
+              required
+              placeholder="ex.: Fabio"
+              pattern="^[a-z0-9._-]{3,32}$"
+              title="3-32 caracteres: letras minúsculas, números, ponto, hífen ou sublinhado"
+              className={inputClasses}
+            />
           </FormField>
           <FormField label="Telefone">
-            <input type="tel" name="phone" value={formData.phone} onChange={handleChange} required className={inputClasses} />
+            <input
+              type="tel"
+              name="phone"
+              value={formData.phone}
+              onChange={handleChange}
+              required
+              className={inputClasses}
+            />
           </FormField>
         </div>
 
+        <FormField label="E-mail (opcional)">
+          <input
+            type="email"
+            name="email"
+            value={formData.email || ''}
+            onChange={handleChange}
+            placeholder="ex.: nome@dominio.com (opcional)"
+            className={inputClasses}
+          />
+        </FormField>
+
         <FormField label="Senha">
-          <input type="password" name="password" value={formData.password} onChange={handleChange} required={!isEditing} placeholder={isEditing ? 'Deixe em branco para não alterar' : ''} className={inputClasses} />
+          <input
+            type="password"
+            name="password"
+            value={formData.password}
+            onChange={handleChange}
+            required={!isEditing}
+            placeholder={isEditing ? 'Deixe em branco para não alterar' : ''}
+            className={inputClasses}
+          />
         </FormField>
 
         <FormField label="Função">
-          <select name="role" value={formData.role} onChange={handleChange} required className={inputClasses}>
+          <select
+            name="role"
+            value={formData.role}
+            onChange={handleChange}
+            required
+            className={inputClasses}
+          >
             {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </FormField>
 
         {formData.role === Role.TECHNICIAN && (
           <FormField label="Supervisor Responsável">
-            <select name="supervisorId" value={formData.supervisorId} onChange={handleChange} required className={inputClasses}>
+            <select
+              name="supervisorId"
+              value={formData.supervisorId}
+              onChange={handleChange}
+              required
+              className={inputClasses}
+            >
               <option value="">Selecione um supervisor</option>
               {supervisors.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>

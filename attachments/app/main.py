@@ -19,11 +19,20 @@ from app.routes.plants import router as plants_router
 app = FastAPI(title="LoopOS Attachments API", version="1.0.0")
 
 # CORS amplo para desenvolvimento (restrinja em produção)
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://192.168.18.69:3000",  # sua rede local
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-User-Id", "X-Role", "Content-Type"],
+    expose_headers=["*"],
+    allow_credentials=False,
+    max_age=600,
 )
 
 # Rotas de OS (mantém seu módulo existente na raiz de /attachments)

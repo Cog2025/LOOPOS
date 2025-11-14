@@ -7,6 +7,12 @@ import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Role } from '../types';
 
+const UsersIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-4-4h-1m-6 6H3v-2a4 4 0 014-4h1m8-6a4 4 0 11-8 0 4 4 0 018 0z"/>
+  </svg>
+);
+
 interface SidebarProps {
   isMobileOpen: boolean;
   setMobileOpen: (isOpen: boolean) => void;
@@ -46,46 +52,22 @@ const Sidebar: React.FC<SidebarProps> = ({
   // Itens de navegação com controle de acesso por papel
   const navItems = [
     {
-      title: 'Gerenciar Técnicos',
-      onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { roles: [Role.TECHNICIAN], title: 'Técnicos' } }),
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.653-.124-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.653.124-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-        </svg>
-      ),
-      show: isAdmin || isSupervisor, // Admin e Supervisor
+        title: 'Gerenciar Usuários',
+        onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Usuários' } }),
+        icon: <UsersIcon />,
+        show: true, // ou aplique RBAC aqui se preferir
     },
     {
-      title: 'Gerenciar Supervisores',
-      onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { roles: [Role.SUPERVISOR], title: 'Supervisores' } }),
-      icon: (
+        title: 'Gerenciar Usinas',
+        onClick: () => setModalConfig({ type: 'MANAGE_PLANTS' }),
+        icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
         </svg>
-      ),
-      show: isAdmin, // Apenas Admin
+        ),
+        show: isAdmin, // mantenha como desejar
     },
-    {
-      title: 'Gerenciar Operadores',
-      onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { roles: [Role.OPERATOR], title: 'Operadores' } }),
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-        </svg>
-      ),
-      show: isAdmin, // Apenas Admin
-    },
-    {
-      title: 'Gerenciar Usinas',
-      onClick: () => setModalConfig({ type: 'MANAGE_PLANTS' }),
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-        </svg>
-      ),
-      show: isAdmin, // Apenas Admin
-    },
-  ];
+    ];
 
   // Conteúdo reutilizável da sidebar (mobile e desktop)
   const SidebarContent = () => (

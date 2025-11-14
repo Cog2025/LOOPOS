@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
+    "@hello-pangea/dnd": "^18.0.1",
     "jspdf": "^3.0.3",
     "jspdf-autotable": "^5.0.2",
     "jszip": "^3.10.1",
@@ -19,10 +20,12 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.17",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.3",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.1.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

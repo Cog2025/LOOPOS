@@ -1,82 +1,126 @@
 // File: contexts/AuthContext.tsx
 // Este arquivo gerencia o estado de autenticação do usuário em toda a aplicação.
+// Mantém comentários explicativos para facilitar manutenção e futuras integrações.
 
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User } from '../types';
-// Importa o hook `useData` para acessar a lista de usuários para validação do login.
+// O AuthProvider consome o DataContext para (1) ler usuários de mock/backend e (2) injetar headers após login.
 import { useData } from './DataContext';
 
-// Define a estrutura do objeto que será exposto pelo contexto de autenticação.
+// Interface pública do contexto de autenticação.
 interface AuthContextType {
-    user: User | null; // O objeto do usuário logado ou nulo se ninguém estiver logado.
-    login: (email: string, pass: string) => boolean; // Função para tentar fazer login.
-    logout: () => void; // Função para fazer logout.
+  user: User | null;
+  login: (identifier: string, password: string) => Promise<void>;
+  logout: () => void;
 }
 
-// Cria o contexto React com o tipo definido acima.
+// Contexto interno e hook de acesso.
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-/**
- * AuthProvider é o componente que envolve a aplicação (ou partes dela)
- * e fornece o estado de autenticação para todos os seus filhos.
- */
-export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    // Estado para armazenar os dados do usuário logado.
-    const [user, setUser] = useState<User | null>(null);
-    // Acessa a lista de todos os usuários do DataContext.
-    const { users } = useData();
-
-    // `useEffect` é usado para verificar se há um usuário logado no localStorage quando a aplicação carrega pela primeira vez.
-    // Isso permite que a sessão do usuário persista mesmo após recarregar a página.
-    useEffect(() => {
-        const storedUser = localStorage.getItem('authUser');
-        if (storedUser) {
-            setUser(JSON.parse(storedUser));
-        }
-    }, []); // O array vazio `[]` garante que este efeito rode apenas uma vez, na montagem do componente.
-
-    // Função de login que verifica as credenciais contra a lista de usuários.
-    const login = (email: string, pass: string): boolean => {
-        // Procura um usuário que corresponda ao email e senha fornecidos.
-        const foundUser = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === pass);
-        if (foundUser) {
-            // Se o usuário for encontrado, cria uma cópia sem a senha para armazenar com segurança.
-            const userToStore = { ...foundUser };
-            delete userToStore.password; 
-            // Atualiza o estado da aplicação com o usuário logado.
-            setUser(userToStore);
-            // Armazena os dados do usuário no localStorage para persistir a sessão.
-            localStorage.setItem('authUser', JSON.stringify(userToStore));
-            return true; // Retorna true para indicar sucesso no login.
-        }
-        return false; // Retorna false se as credenciais forem inválidas.
-    };
-
-    // Função de logout que limpa o estado do usuário.
-    const logout = () => {
-        // Remove o usuário do estado da aplicação.
-        setUser(null);
-        // Remove os dados do usuário do localStorage, encerrando a sessão.
-        localStorage.removeItem('authUser');
-    };
-
-    // Fornece o estado `user` e as funções `login` e `logout` para os componentes filhos.
-    return (
-        <AuthContext.Provider value={{ user, login, logout }}>
-            {children}
-        </AuthContext.Provider>
-    );
+export const useAuth = (): AuthContextType => {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
+  return ctx;
 };
 
-/**
- * useAuth é um hook customizado que simplifica o uso do AuthContext.
- * Em vez de usar `useContext(AuthContext)` em cada componente, basta chamar `useAuth()`.
- */
-export const useAuth = (): AuthContextType => {
-    const context = useContext(AuthContext);
-    // Garante que o hook seja usado dentro de um AuthProvider.
-    if (!context) {
-        throw new Error('useAuth must be used within an AuthProvider');
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Estado do usuário autenticado com persistência em localStorage.
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const raw = localStorage.getItem('currentUser');
+      return raw ? (JSON.parse(raw) as User) : null;
+    } catch {
+      return null;
     }
-    return context;
+  });
+
+  const didReloadRef = React.useRef<string | null>(null);
+
+  // Acesso ao DataContext: lista de usuários e função para injetar headers para RBAC.
+  const { users, setAuthHeaders, reloadFromAPI } = useData();
+
+  /**
+ * Sincroniza headers (RBAC) e recarrega dados do backend após login.
+ * - setAuthHeaders atualiza o headersRef do DataContext imediatamente.
+ * - reloadFromAPI busca /api/users|plants|os já com X-User-Id/X-Role,
+ *   garantindo que os modais abram com os JSONs reais.
+ */
+useEffect(() => {
+  if (user) {
+    setAuthHeaders({ 'X-User-Id': user.id, 'X-Role': user.role });
+    reloadFromAPI();
+  } else {
+    setAuthHeaders({});
+  }
+}, [user, setAuthHeaders, reloadFromAPI]);
+
+  /**
+   * Realiza login usando identificador (usuário ou e‑mail) e senha.
+   * 1) Tenta encontrar o usuário no estado do DataContext.
+   * 2) Faz fallback para a API caso a lista local esteja vazia.
+   * 3) Compara senha simples (mock); em produção, usar fluxo seguro.
+   * 4) Em caso de sucesso, atualiza `user` e injeta headers.
+   */
+  const login = async (identifier: string, password: string) => {
+    const id = identifier.trim().toLowerCase();
+
+    // 1) tenta no estado atual
+    let found = users.find(
+        (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
+    );
+
+    // 2) fallback para API se não achar
+    if (!found) {
+        try {
+        const r = await fetch('/api/users');
+        if (r.ok) {
+            const data: User[] = await r.json();
+            found = data.find(
+            (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
+            );
+        }
+        } catch {
+        // silencioso
+        }
+    }
+
+    // 3) senha vinda do mock quando o objeto não tem 'password'
+    const mockPwdById: Record<string, string> = {
+        'admin': 'admin', 'admin@admin.com': 'admin',
+        'maria': '123', 'maria@supervisor.com': '123',
+        'ana': '123', 'ana@supervisor.com': '123',
+        'carlos': '123', 'carlos@technician.com': '123',
+        'joao': '123', 'joao@technician.com': '123',
+        'pedro': '123', 'pedro@technician.com': '123',
+        'luiza': '123', 'luiza@operator.com': '123',
+    };
+
+    const candidateId =
+        id ||
+        found?.email?.toLowerCase() ||
+        found?.username?.toLowerCase() ||
+        '';
+
+    const effectivePwd =
+        (found as any)?.password ??
+        mockPwdById[candidateId];
+
+    if (!found || effectivePwd !== password) {
+        throw new Error('Usuário ou senha inválidos');
+    }
+
+    setUser(found);
+    };
+
+  // Realiza logout limpando estado e headers.
+  const logout = () => {
+    localStorage.removeItem('currentUser');
+    setUser(null);
+    };
+
+  return (
+    <AuthContext.Provider value={{ user, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
 };

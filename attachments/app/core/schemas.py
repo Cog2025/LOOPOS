@@ -5,26 +5,21 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 # -------------------- USERS --------------------
-RoleLiteral = Literal[
-    "ADMIN",
-    "SUPERVISOR",
-    "TECHNICIAN",
-    "OPERATOR",
-    "COORDINATOR",
-    "ASSISTANT",
-]
+RoleLiteral = Literal["Admin","Coordenador","Supervisor","Operador","Técnico","Auxiliar"]
 
 class UserBase(BaseModel):
     name: str
+    # username obrigatório, 3-32, minúsculas/dígitos/._-
     username: str = Field(
         min_length=3, max_length=32,
         pattern=r"^[a-z0-9._-]+$",
-        description="login sem espaços, ex: fabi"
+        description="login sem espaços, ex: Fabio"
     )
+    email: Optional[str] = None
     phone: Optional[str] = None
     role: RoleLiteral
     can_login: bool = True
-    supervisor_id: Optional[str] = None  # vínculo hierárquico (técnico -> supervisor)
+    supervisorId: Optional[str] = None  # vínculo hierárquico (técnico -> supervisor)
 
 class UserCreate(UserBase):
     password: Optional[str] = None
