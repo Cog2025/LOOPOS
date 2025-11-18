@@ -30,15 +30,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { user, logout } = useAuth();
 
-  // Normaliza o papel para comparação (lida com 'Admin' vs 'ADMIN')
-  const normalizeRole = (r: unknown) => String(r ?? '').trim().toUpperCase();
-  const role = normalizeRole(user?.role);
-
-  // Permissões calculadas a partir do papel normalizado
-  const isAdmin = role === 'ADMIN';
-  const isSupervisor = role === 'SUPERVISOR';
-
-  // Rótulo amigável para exibir na UI (sem afetar a lógica)
+  // --- RÓTULOS ---
+  // Mapa de rótulos amigáveis para exibir na UI
   const roleLabelMap: Record<string, string> = {
     ADMIN: 'Admin',
     SUPERVISOR: 'Supervisor',
@@ -47,26 +40,96 @@ const Sidebar: React.FC<SidebarProps> = ({
     COORDINATOR: 'Coordenador',
     ASSISTANT: 'Auxiliar',
   };
-  const roleLabel = roleLabelMap[role] ?? (typeof user?.role === 'string' ? user?.role : '');
+  const roleLabel = roleLabelMap[user?.role ?? ''] ?? '—';
 
-  // Itens de navegação com controle de acesso por papel
+  // --- ITENS DE NAVEGAÇÃO ---
+  // Renderiza menus conforme a função do usuário e RBAC
   const navItems = [
-    {
-        title: 'Gerenciar Usuários',
-        onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Usuários' } }),
-        icon: <UsersIcon />,
-        show: true, // ou aplique RBAC aqui se preferir
-    },
-    {
-        title: 'Gerenciar Usinas',
-        onClick: () => setModalConfig({ type: 'MANAGE_PLANTS' }),
-        icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-        </svg>
-        ),
-        show: isAdmin, // mantenha como desejar
-    },
+    // ============ GERENCIAMENTO DE USUÁRIOS POR PAPEL ============
+    ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
+        ? [
+            { 
+            title: 'Administradores', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Administradores', roles: [Role.ADMIN] } }), 
+            icon: <UsersIcon />,
+            show: true 
+            },
+        ]
+        : []),
+
+    ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
+    ? [
+        { 
+          title: 'Operadores', 
+          onClick: () => setModalConfig({ 
+            type: 'MANAGE_USERS', 
+            data: { title: 'Operadores', roles: [Role.OPERATOR] } 
+          }), 
+          icon: <UsersIcon />,
+          show: true 
+        },
+    ]
+    : []),
+    
+    ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR
+        ? [
+            { 
+            title: 'Coordenadores', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Coordenadores', roles: [Role.COORDINATOR] } }), 
+            icon: <UsersIcon />,
+            show: true 
+            },
+        ]
+        : []),
+    
+    ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR || user?.role === Role.SUPERVISOR
+        ? [
+            { 
+            title: 'Supervisores', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Supervisores', roles: [Role.SUPERVISOR] } }), 
+            icon: <UsersIcon />,
+            show: true 
+            },
+        ]
+        : []),
+    
+    ...(user?.role !== Role.ASSISTANT // Todos menos Auxiliar
+        ? [
+            { 
+            title: 'Técnicos', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Técnicos', roles: [Role.TECHNICIAN] } }), 
+            icon: <UsersIcon />,
+            show: true 
+            },
+        ]
+        : []),
+    
+    ...(user?.role !== Role.ASSISTANT // Todos menos Auxiliar
+        ? [
+            { 
+            title: 'Auxiliares', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Auxiliares', roles: [Role.ASSISTANT] } }), 
+            icon: <UsersIcon />,
+            show: true 
+            },
+        ]
+        : []),
+
+    // ============ GERENCIAMENTO DE USINAS ============
+    ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR || user?.role === Role.SUPERVISOR
+        ? [
+            {
+            title: 'Gerenciar Usinas',
+            onClick: () => setModalConfig({ type: 'MANAGE_PLANTS' }),
+            icon: (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+            ),
+            show: true,
+            },
+        ]
+        : []),
     ];
 
   // Conteúdo reutilizável da sidebar (mobile e desktop)

@@ -12,6 +12,7 @@ import os
 import uuid
 
 # Routers do pacote (ajuste conforme sua estrutura: app/routes/*.py)
+from app.core.schemas import UserCreate, UserOut
 from app.routes.users import router as users_router
 from app.routes.plants import router as plants_router
 

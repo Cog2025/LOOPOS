@@ -1,10 +1,11 @@
 # /attachments/app/routes/users.py
 from fastapi import APIRouter, HTTPException, Query, Request
-from typing import List
+from typing import List, Optional
 from uuid import uuid4
 from app.core.storage import load_json, save_json
 from app.core.schemas import UserCreate, UserUpdate, UserOut
 from app.core.rbac import can_view_user, can_edit_user
+from app.core.sync import sync_assignments_from_users
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 _USERS_FILE = "users.json"
@@ -32,7 +33,6 @@ def _actor_from_headers(req: Request, users: list[dict]) -> dict:
         for u in users:
             if u["id"] == rid:
                 return u
-    # fallback por role simples
     return {"id":"anon","role": (rrole or "Auxiliar"), "plantIds": []}
 
 @router.get("", response_model=List[UserOut])
@@ -41,26 +41,76 @@ def list_users(request: Request):
     actor = _actor_from_headers(request, users)
     return [u for u in users if can_view_user(actor, u)]
     
+    
 @router.post("", response_model=UserOut, status_code=201)
 def create_user(request: Request, payload: UserCreate):
     users = _all_users()
     actor = _actor_from_headers(request, users)
-    # só pode criar se teria permissão de editar esse papel
+    
     dummy = {**payload.dict(), "id":"new", "plantIds": payload.dict().get("plantIds", [])}
     if not can_edit_user(actor, dummy):
         raise HTTPException(403, "forbidden")
+    
+    if _exists_username(users, payload.username):
+        raise HTTPException(status_code=409, detail="username already exists")
+    
+    new_user = {
+        "id": str(uuid4()),
+        "name": payload.name,
+        "username": payload.username,
+        "email": payload.email,
+        "password": payload.password,
+        "phone": payload.phone,
+        "role": payload.role,
+        "can_login": True,
+        "plantIds": payload.dict().get("plantIds", []),
+        "supervisorId": payload.dict().get("supervisorId", None),
+    }
+    
+    users.append(new_user)
+    _save_users(users)
+    sync_assignments_from_users()  # ✅ ADICIONE ISTO!
+    return new_user
+
+
 
 @router.put("/{user_id}", response_model=UserOut)
-def update_user(user_id: str, payload: UserUpdate):
+def update_user(user_id: str, payload: UserUpdate, request: Request):
     users = _all_users()
-    if _exists_username(users, payload.username, skip_id=user_id):
-        raise HTTPException(status_code=409, detail="username already exists")
+    actor = _actor_from_headers(request, users)
+    
+    # Encontra o usuário atual
+    current_user = next((u for u in users if u["id"] == user_id), None)
+    if not current_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # ✅ IMPORTANTE: Supervisor pode editar A SI MESMO
+    # Verifique se actor.id === user_id (editando a si mesmo)
+    actor_id = actor.get("id")
+    if actor_id and actor_id == user_id:
+        # Pode editar a si mesmo
+        pass
+    elif not can_edit_user(actor, current_user):
+        # Caso contrário, verifica RBAC
+        raise HTTPException(status_code=403, detail="forbidden")
+    
+    update_data = payload.dict(exclude_unset=True)
+    
+    # Valida username se foi mudado
+    if "username" in update_data and update_data["username"] != current_user.get("username"):
+        if _exists_username(users, update_data["username"], skip_id=user_id):
+            raise HTTPException(status_code=409, detail="username already exists")
+    
     for i, u in enumerate(users):
         if u["id"] == user_id:
-            users[i] = {**u, **payload.dict()}
+            updated = {**u, **update_data}
+            users[i] = updated
             _save_users(users)
-            return users[i]
+            sync_assignments_from_users()  # ✅ Usa a função importada
+            return updated
+    
     raise HTTPException(status_code=404, detail="User not found")
+
 
 @router.delete("/{user_id}")
 def delete_user(user_id: str):

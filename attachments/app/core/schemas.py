@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 # -------------------- USERS --------------------
 RoleLiteral = Literal["Admin","Coordenador","Supervisor","Operador","Técnico","Auxiliar"]
 
+
 class UserBase(BaseModel):
     name: str
-    # username obrigatório, 3-32, minúsculas/dígitos/._-
     username: str = Field(
         min_length=3, max_length=32,
         pattern=r"^[a-z0-9._-]+$",
@@ -19,13 +19,24 @@ class UserBase(BaseModel):
     phone: Optional[str] = None
     role: RoleLiteral
     can_login: bool = True
-    supervisorId: Optional[str] = None  # vínculo hierárquico (técnico -> supervisor)
+    supervisorId: Optional[str] = None
+
 
 class UserCreate(UserBase):
     password: Optional[str] = None
 
-class UserUpdate(UserBase):
+
+class UserUpdate(BaseModel):  # ✅ NÃO herda de UserBase, define seus próprios campos
+    name: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[RoleLiteral] = None
+    can_login: Optional[bool] = None
+    supervisorId: Optional[str] = None
     password: Optional[str] = None
+    plantIds: Optional[List[str]] = None  # ✅ ADICIONE ISTO
+
 
 class UserOut(UserBase):
     id: str
@@ -37,6 +48,7 @@ class SubPlant(BaseModel):
     id: int
     inverterCount: int = 0
 
+
 class PlantBase(BaseModel):
     client: str
     name: str
@@ -45,11 +57,14 @@ class PlantBase(BaseModel):
     subPlants: List[SubPlant] = Field(default_factory=list)
     assets: List[str] = Field(default_factory=list)
 
+
 class PlantCreate(PlantBase):
     pass
 
+
 class PlantUpdate(PlantBase):
     pass
+
 
 class PlantOut(PlantBase):
     id: str

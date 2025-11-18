@@ -53,10 +53,14 @@ export interface Plant {
     id: string; // Identificador único.
     client: string; // Nome do cliente proprietário.
     name: string; // Nome da usina.
-    subPlants: SubPlant[]; // Array de sub-usinas.
+    subPlants: { id: number; inverterCount: number }[]; // Array de sub-usinas.
     stringCount: number; // Quantidade total de strings.
     trackerCount: number; // Quantidade total de trackers.
     assets: string[]; // Lista de nomes dos ativos presentes na usina.
+    coordinatorId?: string | null;
+    supervisorIds?: string[];
+    technicianIds?: string[];
+    assistantIds?: string[];
 }
 
 // Interface para um registro de log (histórico) de uma OS.

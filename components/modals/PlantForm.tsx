@@ -125,21 +125,43 @@ const PlantForm: React.FC<PlantFormProps> = ({ isOpen, onClose, initialData, pre
     setFormData(getInitialState());
 
     if (initialData) {
-      const pid = initialData.id;
-      // Em edição, tenta reconstruir atribuições a partir de plantIds dos usuários
-      setAssignedCoordinator(allCoordinators.find(u => u.plantIds?.includes(pid))?.id ?? null);
-      setAssignedSupervisors(allSupervisors.filter(u => u.plantIds?.includes(pid)).map(u => u.id));
-      setAssignedTechnicians(allTechnicians.filter(u => u.plantIds?.includes(pid)).map(u => u.id));
-      setAssignedAssistants(allAssistants.filter(u => u.plantIds?.includes(pid)).map(u => u.id));
+      // ✅ BUSQUE DIRETAMENTE DA API
+      const fetchAssignments = async () => {
+        try {
+          const res = await fetch(`http://127.0.0.1:8000/api/plants/${initialData.id}/assignments`);
+          if (res.ok) {
+            const a = await res.json();
+            console.log('DEBUG - Atribuições carregadas:', a);
+            setAssignedCoordinator(a.coordinatorId || null);
+            setAssignedSupervisors(a.supervisorIds || []);
+            setAssignedTechnicians(a.technicianIds || []);
+            setAssignedAssistants(a.assistantIds || []);
+          } else {
+            // Fallback: use initialData
+            setAssignedCoordinator(initialData.coordinatorId ?? null);
+            setAssignedSupervisors(initialData.supervisorIds ?? []);
+            setAssignedTechnicians(initialData.technicianIds ?? []);
+            setAssignedAssistants(initialData.assistantIds ?? []);
+          }
+        } catch (error) {
+          console.error('Erro ao buscar atribuições:', error);
+          // Fallback
+          setAssignedCoordinator(initialData.coordinatorId ?? null);
+          setAssignedSupervisors(initialData.supervisorIds ?? []);
+          setAssignedTechnicians(initialData.technicianIds ?? []);
+          setAssignedAssistants(initialData.assistantIds ?? []);
+        }
+      };
+      
+      fetchAssignments();
     } else {
-      // Em criação, inicia vazio (ou com defaults)
       setAssignedCoordinator(null);
       setAssignedSupervisors([]);
       setAssignedTechnicians([]);
       setAssignedAssistants([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialData, presetClient]); // ← incluir presetClient garante prefill ao trocar de cliente
+  }, [isOpen, initialData, presetClient]);
+
 
   // Em CRIAÇÃO, sincroniza o array subPlants quando N muda, preservando valores já digitados.
   useEffect(() => {
@@ -183,31 +205,37 @@ const PlantForm: React.FC<PlantFormProps> = ({ isOpen, onClose, initialData, pre
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Ajuste conforme sua assinatura atual no DataContext:
-    // Exemplo com nova assinatura (coordenador/supervisor/técnico/auxiliar):
-    const assignments = {
-      coordinatorId: assignedCoordinator,
-      supervisorIds: assignedSupervisors,
-      technicianIds: assignedTechnicians,
-      assistantIds: assignedAssistants
+    // ✅ CRIE O PAYLOAD COM TIPO CORRETO
+    const basePayload = {
+      client: formData.client,
+      name: formData.name,
+      stringCount: formData.stringCount || 0,
+      trackerCount: formData.trackerCount || 0,
+      subPlants: formData.subPlants || [],
+      assets: formData.assets || [],
+      coordinatorId: assignedCoordinator || "",
+      supervisorIds: assignedSupervisors || [],
+      technicianIds: assignedTechnicians || [],
+      assistantIds: assignedAssistants || [],
     };
 
-    if (isEditing && initialData) {
-      // Edição
-      // Se sua função ainda for updatePlant(plant, techIds, supIds):
-      // updatePlant({ ...initialData, ...formData }, assignedTechnicians, assignedSupervisors);
-      // Senão (nova assinatura com assignments):
-      // @ts-ignore -> remova o ignore depois de atualizar a assinatura no DataContext
-      updatePlant({ ...initialData, ...formData }, assignments);
-    } else {
-      // Criação
-      // addPlant(formData) // assinatura antiga
-      // Nova assinatura (retorna plant criado) com assignments:
-      // @ts-ignore -> remova o ignore depois de atualizar a assinatura no DataContext
-      addPlant(formData, assignments);
-    }
+    // ✅ ADICIONE ID APENAS PARA EDIÇÃO
+    const payload = isEditing && initialData 
+      ? { ...basePayload, id: initialData.id }
+      : basePayload;
 
-    onClose();
+    // ✅ ENVIE O PAYLOAD CORRETO
+    try {
+      if (isEditing && initialData) {
+        updatePlant(payload as Plant);
+      } else {
+        addPlant(basePayload);
+      }
+      onClose();
+    } catch (error) {
+      console.error('Erro ao salvar usina:', error);
+      alert('Falha ao salvar usina');
+    }
   };
 
   // Utilitário de estilo

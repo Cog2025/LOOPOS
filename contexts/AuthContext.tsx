@@ -24,99 +24,78 @@ export const useAuth = (): AuthContextType => {
 };
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Estado do usuário autenticado com persistência em localStorage.
   const [user, setUser] = useState<User | null>(() => {
     try {
       const raw = localStorage.getItem('currentUser');
-      return raw ? (JSON.parse(raw) as User) : null;
-    } catch {
-      return null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as User;
+        console.log('👤 Usuário recuperado do localStorage:', parsed.name);
+        return parsed;
+      }
+    } catch (error) {
+      console.error('Erro ao recuperar usuário:', error);
     }
+    return null;
   });
 
-  const didReloadRef = React.useRef<string | null>(null);
-
-  // Acesso ao DataContext: lista de usuários e função para injetar headers para RBAC.
-  const { users, setAuthHeaders, reloadFromAPI } = useData();
+  // ✅ Pega tudo que precisa NO ESCOPO DO COMPONENTE
+  const { users, setAuthHeaders, reloadFromAPI, clearData, loadUserData } = useData();
 
   /**
- * Sincroniza headers (RBAC) e recarrega dados do backend após login.
- * - setAuthHeaders atualiza o headersRef do DataContext imediatamente.
- * - reloadFromAPI busca /api/users|plants|os já com X-User-Id/X-Role,
- *   garantindo que os modais abram com os JSONs reais.
- */
-useEffect(() => {
-  if (user) {
-    setAuthHeaders({ 'X-User-Id': user.id, 'X-Role': user.role });
-    reloadFromAPI();
-  } else {
-    setAuthHeaders({});
-  }
-}, [user, setAuthHeaders, reloadFromAPI]);
-
-  /**
-   * Realiza login usando identificador (usuário ou e‑mail) e senha.
-   * 1) Tenta encontrar o usuário no estado do DataContext.
-   * 2) Faz fallback para a API caso a lista local esteja vazia.
-   * 3) Compara senha simples (mock); em produção, usar fluxo seguro.
-   * 4) Em caso de sucesso, atualiza `user` e injeta headers.
+   * Sincroniza headers (RBAC) e recarrega dados do backend após login.
    */
+  useEffect(() => {
+    if (user) {
+      console.log('🔐 Injetando headers de autenticação...');
+      setAuthHeaders({ 'X-User-Id': user.id, 'X-Role': user.role });
+      
+      // ✅ AGORA reloadFromAPI() é chamado automaticamente
+      reloadFromAPI();
+    } else {
+      setAuthHeaders({});
+    }
+  }, [user, setAuthHeaders, reloadFromAPI]);
+
   const login = async (identifier: string, password: string) => {
     const id = identifier.trim().toLowerCase();
 
-    // 1) tenta no estado atual
     let found = users.find(
-        (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
+      (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
     );
 
-    // 2) fallback para API se não achar
-    if (!found) {
-        try {
-        const r = await fetch('/api/users');
+    if (!found && users.length === 0) {
+      try {
+        console.log('📦 Users vazio, carregando do JSON...');
+        const r = await fetch('/data/users.json');
         if (r.ok) {
-            const data: User[] = await r.json();
-            found = data.find(
+          const data: User[] = await r.json();
+          found = data.find(
             (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
-            );
+          );
         }
-        } catch {
-        // silencioso
-        }
+      } catch (error) {
+        console.error('Erro ao carregar JSON:', error);
+      }
     }
 
-    // 3) senha vinda do mock quando o objeto não tem 'password'
-    const mockPwdById: Record<string, string> = {
-        'admin': 'admin', 'admin@admin.com': 'admin',
-        'maria': '123', 'maria@supervisor.com': '123',
-        'ana': '123', 'ana@supervisor.com': '123',
-        'carlos': '123', 'carlos@technician.com': '123',
-        'joao': '123', 'joao@technician.com': '123',
-        'pedro': '123', 'pedro@technician.com': '123',
-        'luiza': '123', 'luiza@operator.com': '123',
-    };
-
-    const candidateId =
-        id ||
-        found?.email?.toLowerCase() ||
-        found?.username?.toLowerCase() ||
-        '';
-
-    const effectivePwd =
-        (found as any)?.password ??
-        mockPwdById[candidateId];
+    const effectivePwd = (found as any)?.password;
 
     if (!found || effectivePwd !== password) {
-        throw new Error('Usuário ou senha inválidos');
+      throw new Error('Usuário ou senha inválidos');
     }
 
+    // ✅ SIMPLES: Apenas seta o usuário
     setUser(found);
-    };
+    localStorage.setItem('currentUser', JSON.stringify(found));
+    
+    // ✅ O useEffect acima vai detectar a mudança e chamar reloadFromAPI()
+  };
 
-  // Realiza logout limpando estado e headers.
   const logout = () => {
     localStorage.removeItem('currentUser');
+    clearData();
     setUser(null);
-    };
+  };
 
   return (
     <AuthContext.Provider value={{ user, login, logout }}>

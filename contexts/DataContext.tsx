@@ -54,9 +54,10 @@ interface DataContextType {
   plants: Plant[];
   osList: OS[];
   notifications: Notification[];
-  // NOVO: permite que outro contexto injete headers de autorização (após login)
   setAuthHeaders: (h: Record<string, string>) => void;
   reloadFromAPI: () => Promise<void>;
+  loadUserData: () => Promise<void>;
+  clearData: () => void;  // ← ADICIONE ISSO
   addUser: (user: Omit<User, 'id'>) => Promise<User>;
   updateUser: (user: User) => Promise<User>;
   deleteUser: (id: string) => Promise<void>;
@@ -101,6 +102,15 @@ const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<R
   return [storedValue, setValue];
 };
 
+const normalizePlant = (p: any) => ({
+  ...p,
+  coordinatorId: p?.coordinatorId ?? null,
+  supervisorIds: Array.isArray(p?.supervisorIds) ? p.supervisorIds : [],
+  technicianIds: Array.isArray(p?.technicianIds) ? p.technicianIds : [],
+  assistantIds: Array.isArray(p?.assistantIds) ? p.assistantIds : [],
+});
+
+
 /**
  * DataProvider é o componente que gerencia e fornece todos os dados da aplicação.
  * Ele persiste os dados no localStorage por "tabela" (users, plants, osList, notifications).
@@ -111,6 +121,41 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [plants, setPlants] = useLocalStorage<Plant[]>('plants', []);
   const [osList, setOsList] = useLocalStorage<OS[]>('osList', []);
   const [notifications, setNotifications] = useLocalStorage<Notification[]>('notifications', []);
+
+  // ✅ loadUserData - carrega dados APÓS login
+  const loadUserData = React.useCallback(async () => {
+    try {
+      const [usersRes, plantsRes, osRes] = await Promise.all([
+        fetch('/data/users.json'),
+        fetch('/data/plants.json'),
+        fetch('/data/os.json'),
+      ]);
+
+      if (usersRes.ok) {
+        const U = await usersRes.json();
+        console.log('✅ Dados carregados após login');
+        setUsers(U);
+      }
+      if (plantsRes.ok) {
+        const P = (await plantsRes.json()).map(normalizePlant);
+        setPlants(P);
+      }
+      if (osRes.ok) {
+        const O = await osRes.json();
+        setOsList(O);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar dados:', error);
+    }
+  }, [setUsers, setPlants, setOsList]); // ← Dependências
+
+  // ✅ clearData - FORA de loadUserData e com indentação correta
+  const clearData = React.useCallback(() => {
+    setUsers([]);
+    setPlants([]);
+    setOsList([]);
+    setNotifications([]);
+  }, [setUsers, setPlants, setOsList, setNotifications]);
 
   const headersRef = React.useRef<Record<string, string>>({});
   const setAuthHeaders = React.useCallback((h: Record<string, string>) => {
@@ -133,86 +178,51 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     Array.isArray(x?.results) ? x.results :
     Array.isArray(x?.data) ? x.data : [];
 
-  const didBootstrapRef = React.useRef(false);
-
-  React.useEffect(() => {
-    if (didBootstrapRef.current) return;
-    didBootstrapRef.current = true;
-    (async () => {
-      const start = Date.now();
-      while (!(await waitHealth()) && Date.now() - start < 5000) {
-        await new Promise(r => setTimeout(r, 200));
-      }
-
-      const hasAuth = Object.keys(headersRef.current || {}).length > 0;
-
-      if (!hasAuth) {
-        if (SEED && users.length === 0) setUsers(initialUsers);
-        try {
-          const [p, o] = await Promise.all([
-            api('/api/plants').then(r => (r.ok ? r.json() : [])),
-            api('/api/os').then(r => (r.ok ? r.json() : [])),
-          ]);
-          const P = toArray(p);
-          const O = toArray(o);
-          setPlants(prev => (P.length ? P : (SEED && !prev.length ? initialPlants : prev)));
-          setOsList(prev => (O.length ? O : (SEED && !prev.length ? initialOS : prev)));
-        } catch {
-          if (SEED && plants.length === 0) setPlants(initialPlants);
-          if (SEED && osList.length === 0) setOsList(initialOS);
-        }
-        return;
-      }
-
-      try {
-        const [u, p, o] = await Promise.all([
-          api('/api/users').then(r => r.ok ? r.json() : []),
-          api('/api/plants').then(r => r.ok ? r.json() : []),
-          api('/api/os').then(r => r.ok ? r.json() : []),
-        ]);
-        const U = toArray(u), P = toArray(p), O = toArray(o);
-        setUsers(prev => (U.length ? U : (prev.length ? prev : (SEED ? initialUsers : prev))));
-        setPlants(prev => (P.length ? P : (prev.length ? prev : (SEED ? initialPlants : prev))));
-        setOsList(prev => (O.length ? O : (prev.length ? prev : (SEED ? initialOS : prev))));
-      } catch {
-        if (!users.length && SEED) setUsers(initialUsers);
-        if (!plants.length && SEED) setPlants(initialPlants);
-        if (!osList.length && SEED) setOsList(initialOS);
-      }
-    })();
-  }, [api, waitHealth, users.length, plants.length, osList.length]);
-
-  // 3) Reload explícito do backend; use após login para trocar mocks por JSONs reais.
   const reloadFromAPI = React.useCallback(async () => {
     try {
         const [u, p, o] = await Promise.all([
         api('/api/users').then(r => r.ok ? r.json() : []),
-        api('/api/plants').then(r => r.ok ? r.json() : []),
+        api('/api/plants').then(r => r.ok ? r.json() : []),  // ✅ Pega do backend
         api('/api/os').then(r => r.ok ? r.json() : []),
         ]);
-        const U = toArray(u), P = toArray(p), O = toArray(o);
+        const U = toArray(u);
+        const P = toArray(p).map(normalizePlant);  // ✅ Normaliza
+        const O = toArray(o);
+
         if (U.length) setUsers(() => U);
-        if (P.length) setPlants(() => P);
+        if (P.length) setPlants(() => P);  // ✅ Salva no estado
         if (O.length) setOsList(() => O);
-    } catch {/* mantém estado atual */}
+    } catch {
+        /* mantém estado atual */
+    }
     }, [api]);
 
-  // 5) Helpers de notificação e filtros.
   const createNotification = (userId: string, message: string) => {
     const n: Notification = { id: `notif-${Date.now()}`, userId, message, read: false, timestamp: new Date().toISOString() };
     setNotifications(prev => [n, ...prev]);
   };
 
   const filterOSForUser = (u: User): OS[] => {
-    if (u.role === Role.TECHNICIAN) return osList.filter(os => os.technicianId === u.id);
+    if (u.role === Role.ADMIN || u.role === Role.OPERATOR) return osList;
+    if (u.role === Role.COORDINATOR) {
+      const myPlants = new Set(u.plantIds || []);
+      return osList.filter(os => myPlants.has(os.plantId));
+    }
     if (u.role === Role.SUPERVISOR) {
-      const techIds = users.filter(x => x.role === Role.TECHNICIAN && x.supervisorId === u.id).map(x => x.id);
+      const techIds = users
+        .filter(x => x.role === Role.TECHNICIAN && x.supervisorId === u.id)
+        .map(x => x.id);
       return osList.filter(os => techIds.includes(os.technicianId));
+    }
+    if (u.role === Role.TECHNICIAN) return osList.filter(os => os.technicianId === u.id);
+    if (u.role === Role.ASSISTANT) {
+      const myPlants = new Set(u.plantIds || []);
+      return osList.filter(os => myPlants.has(os.plantId));
     }
     return osList;
   };
 
-  // 6) CRUD Users.
+  // CRUD Users, Plants, OS... (resto do código igual)
   const addUser = async (u: Omit<User, 'id'>) => {
     const res = await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(u) });
     if (!res.ok) throw new Error('Falha ao criar usuário');
@@ -235,11 +245,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUsers(prev => prev.filter(x => x.id !== id));
   };
 
-  // 7) CRUD Plants + vinculações (assignments).
   const putAssignments = async (plantId: string, a: AssignmentsDTO) => {
     try {
       await api(`/api/plants/${plantId}/assignments`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
-      // Atualiza links reversos no estado; backend já persiste em users.json.
       setUsers(prev => prev.map(u => {
         const list = new Set(u.plantIds || []);
         const inAssign = u.id === a.coordinatorId || a.supervisorIds.includes(u.id) || a.technicianIds.includes(u.id) || a.assistantIds.includes(u.id);
@@ -253,55 +261,75 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const addPlant = async (plant: Omit<Plant, 'id'>, assignments?: AssignmentsDTO): Promise<Plant> => {
     try {
-      const res = await api('/api/plants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plant) });
+      const res = await api('/api/plants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plant),
+      });
       if (!res.ok) throw new Error();
       const saved: Plant = await res.json();
-      setPlants(prev => [...prev, saved]);
-      if (assignments) await putAssignments(saved.id, {
-        coordinatorId: assignments.coordinatorId ?? null,
-        supervisorIds: assignments.supervisorIds || [],
-        technicianIds: assignments.technicianIds || [],
-        assistantIds: assignments.assistantIds || [],
-      });
+      setPlants(prev => [...prev, normalizePlant(saved)]);
+      if (assignments) {
+        await putAssignments(saved.id, {
+          coordinatorId: assignments.coordinatorId ?? null,
+          supervisorIds: assignments.supervisorIds || [],
+          technicianIds: assignments.technicianIds || [],
+          assistantIds: assignments.assistantIds || [],
+        });
+      }
       return saved;
     } catch {
-      const local: Plant = { ...plant, id: `plant-${Date.now()}` };
-      setPlants(prev => [...prev, local]); // fallback
+      const local: Plant = { ...plant, id: `plant-${Date.now()}` } as Plant;
+      setPlants(prev => [...prev, normalizePlant(local)]);
       return local;
     }
   };
 
   const updatePlant = async (plant: Plant, assignments?: AssignmentsDTO): Promise<void> => {
     try {
-      const res = await api(`/api/plants/${plant.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plant) });
+      const res = await api(`/api/plants/${plant.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plant),
+      });
       if (!res.ok) throw new Error();
       const saved: Plant = await res.json();
-      setPlants(prev => prev.map(p => (p.id === saved.id ? saved : p)));
-      if (assignments) await putAssignments(saved.id, {
-        coordinatorId: assignments.coordinatorId ?? null,
-        supervisorIds: assignments.supervisorIds || [],
-        technicianIds: assignments.technicianIds || [],
-        assistantIds: assignments.assistantIds || [],
-      });
+      setPlants(prev => prev.map(p => (p.id === saved.id ? normalizePlant(saved) : p)));
+      if (assignments) {
+        await putAssignments(saved.id, {
+          coordinatorId: assignments.coordinatorId ?? null,
+          supervisorIds: assignments.supervisorIds || [],
+          technicianIds: assignments.technicianIds || [],
+          assistantIds: assignments.assistantIds || [],
+        });
+      }
     } catch {
-      setPlants(prev => prev.map(p => (p.id === plant.id ? plant : p))); // fallback
+      setPlants(prev => prev.map(p => (p.id === plant.id ? normalizePlant(plant) : p)));
     }
   };
 
-  // 8) CRUD OS + logs/anexos.
   const addOS = async (osData: Omit<OS, 'id'|'title'|'createdAt'|'updatedAt'|'logs'|'imageAttachments'>) => {
     const now = new Date().toISOString();
     const nextIdNumber = (osList.length > 0 ? Math.max(...osList.map(os => parseInt(os.id.replace(/\D/g, ''), 10))) : 0) + 1;
     const newId = `OS${String(nextIdNumber).padStart(4, '0')}`;
     const newTitle = `${newId} - ${osData.activity}`;
-    const payload: OS = { ...osData, id: newId, title: newTitle, createdAt: now, updatedAt: now, logs: [], imageAttachments: [] };
+    const payload: OS = {
+      ...osData,
+      id: newId,
+      title: newTitle,
+      createdAt: now,
+      updatedAt: now,
+      attachmentsEnabled: true,
+      logs: [],
+      imageAttachments: []
+    };
     try {
       const res = await api('/api/os', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       const saved: OS = await res.json();
       setOsList(prev => [saved, ...prev]);
     } catch {
-      setOsList(prev => [payload, ...prev]); // fallback
+      setOsList(prev => [payload, ...prev]);
     }
     if (osData.supervisorId) createNotification(osData.supervisorId, `Nova OS "${newTitle}" criada.`);
     if (osData.technicianId) createNotification(osData.technicianId, `Você foi atribuído à nova OS "${newTitle}".`);
@@ -343,12 +371,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const markNotificationAsRead = (id: string) =>
     setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
 
-  // 9) ÚNICO Provider com tudo no value.
+  // ✅ RETURN do Provider
   return (
     <DataContext.Provider value={{
       users, plants, osList, notifications,
       setAuthHeaders,
-      reloadFromAPI, // exposto para o AuthProvider
+      reloadFromAPI,
+      loadUserData,
+      clearData,
       addUser, updateUser, deleteUser,
       addPlant, updatePlant,
       addOS, updateOS, addOSLog, addOSAttachment, deleteOSAttachment,
@@ -361,9 +391,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 // Hook de acesso ao contexto (mantido e documentado).
 export const useData = (): DataContextType => {
-  const ctx = useContext(DataContext); // garante acesso seguro ao contexto
-  if (!ctx) throw new Error('useData must be used within a DataProvider'); // erro claro para diagnóstico
-  return ctx; // retorna a interface tipada do contexto
+  const ctx = useContext(DataContext);
+  if (!ctx) throw new Error('useData must be used within a DataProvider');
+  return ctx;
 };
 
 // Exporta também como default para compatibilidade com imports existentes.

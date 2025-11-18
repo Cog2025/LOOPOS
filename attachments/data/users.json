@@ -22,5 +22,31 @@
     "password": "123",
     "id": "75b2a495-f9ea-41ed-a33e-227eb81754d1",
     "plantIds": []
+  },
+  {
+    "id": "2bd727b1-9938-44df-bafe-48fafb62a1e1",
+    "name": "Guilherme Silva1",
+    "username": "guilherme",
+    "email": null,
+    "password": "123",
+    "phone": "41999999999",
+    "role": "Supervisor",
+    "can_login": true,
+    "plantIds": [],
+    "supervisorId": ""
+  },
+  {
+    "id": "9b0b58da-a8ed-4796-bb50-89a57c22e392",
+    "name": "Marcelo",
+    "username": "marcelo",
+    "email": null,
+    "password": "123",
+    "phone": "4199999999",
+    "role": "Técnico",
+    "can_login": true,
+    "plantIds": [
+      "a1b90284-6c1f-4209-8181-fbab16379da2"
+    ],
+    "supervisorId": "2bd727b1-9938-44df-bafe-48fafb62a1e1"
   }
 ]

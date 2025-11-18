@@ -110,20 +110,39 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const { name, username, phone, password, role: formRole } = formData;
+    
     if (!name || !username || !phone || (!isEditing && !password) || !formRole) {
       alert('Por favor, preencha todos os campos obrigatórios.');
       return;
     }
 
     if (isEditing) {
-      const dataToUpdate: User = { ...initialData!, ...formData };
-      if (!formData.password) delete (dataToUpdate as any).password;
-      updateUser(dataToUpdate);
+      const dataToUpdate: Partial<User> = {
+        ...initialData,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        role: formData.role,
+        plantIds: formData.plantIds,  // ← Certifique-se que está aqui
+        supervisorId: formData.supervisorId,
+      };
+      
+      if (formData.password && formData.password.trim() !== '') {
+        (dataToUpdate as any).password = formData.password;
+      }
+      
+      // ✅ ADICIONE ISTO:
+      console.log('Enviando para backend:', dataToUpdate);
+      
+      updateUser(dataToUpdate as User);
     } else {
       addUser(formData);
     }
+    
     onClose();
   };
+
+
 
   return (
     <Modal
@@ -152,16 +171,18 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Usuário">
             <input
-              type="text"
-              name="username"
-              value={formData.username}
-              onChange={handleChange}
-              required
-              placeholder="ex.: Fabio"
-              pattern="^[a-z0-9._-]{3,32}$"
-              title="3-32 caracteres: letras minúsculas, números, ponto, hífen ou sublinhado"
-              className={inputClasses}
-            />
+            type="text"
+            name="username"
+            value={formData.username}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (/^[a-z0-9._-]*$/i.test(val) && val.length <= 32) {
+                setFormData(prev => ({ ...prev, username: val }));
+              }
+            }}
+            maxLength={32}
+            placeholder="ex: usuario.nome"
+          />
           </FormField>
           <FormField label="Telefone">
             <input
