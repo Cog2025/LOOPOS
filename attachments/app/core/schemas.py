@@ -1,12 +1,9 @@
 # /attachments/app/core/schemas.py
-# Esquemas Pydantic para requests/responses da API.
-
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 # -------------------- USERS --------------------
 RoleLiteral = Literal["Admin","Coordenador","Supervisor","Operador","Técnico","Auxiliar"]
-
 
 class UserBase(BaseModel):
     name: str
@@ -21,12 +18,10 @@ class UserBase(BaseModel):
     can_login: bool = True
     supervisorId: Optional[str] = None
 
-
 class UserCreate(UserBase):
     password: Optional[str] = None
 
-
-class UserUpdate(BaseModel):  # ✅ NÃO herda de UserBase, define seus próprios campos
+class UserUpdate(BaseModel):
     name: Optional[str] = None
     username: Optional[str] = None
     email: Optional[str] = None
@@ -35,19 +30,19 @@ class UserUpdate(BaseModel):  # ✅ NÃO herda de UserBase, define seus próprio
     can_login: Optional[bool] = None
     supervisorId: Optional[str] = None
     password: Optional[str] = None
-    plantIds: Optional[List[str]] = None  # ✅ ADICIONE ISTO
-
+    plantIds: Optional[List[str]] = None
 
 class UserOut(UserBase):
     id: str
-    plantIds: List[str] = []  # preenchido a partir das atribuições por usina
+    # Senha removida por segurança (Use /api/login para autenticar)
+    # password: Optional[str] = None 
+    plantIds: List[str] = []
 
 
 # -------------------- PLANTS --------------------
 class SubPlant(BaseModel):
     id: int
     inverterCount: int = 0
-
 
 class PlantBase(BaseModel):
     client: str
@@ -57,22 +52,24 @@ class PlantBase(BaseModel):
     subPlants: List[SubPlant] = Field(default_factory=list)
     assets: List[str] = Field(default_factory=list)
 
-
-class PlantCreate(PlantBase):
-    pass
-
-
-class PlantUpdate(PlantBase):
-    pass
-
-
-class PlantOut(PlantBase):
-    id: str
-
-
-# -------------------- ASSIGNMENTS --------------------
-class AssignmentsPayload(BaseModel):
-    coordinatorId: Optional[str] = None
+# MIXIN DE ASSIGNMENTS PARA REUTILIZAR
+class AssignmentsMixin(BaseModel):
+    coordinatorId: Optional[str] = ""
     supervisorIds: List[str] = Field(default_factory=list)
     technicianIds: List[str] = Field(default_factory=list)
     assistantIds: List[str] = Field(default_factory=list)
+
+# AGORA SIM: Create e Update aceitam assignments!
+class PlantCreate(PlantBase, AssignmentsMixin):
+    pass
+
+class PlantUpdate(PlantBase, AssignmentsMixin):
+    pass
+
+class PlantOut(PlantBase, AssignmentsMixin):
+    id: str
+
+
+# -------------------- ASSIGNMENTS PAYLOAD (Mantido para compatibilidade) --------------------
+class AssignmentsPayload(AssignmentsMixin):
+    pass

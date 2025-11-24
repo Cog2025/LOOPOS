@@ -11,7 +11,6 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 _USERS_FILE = "users.json"
 
 def _all_users() -> list[dict]:
-    # Com o load_json acima, arquivo vazio/corrompido vira []
     return load_json(_USERS_FILE, [])
 
 def _save_users(users: list[dict]):
@@ -38,9 +37,10 @@ def _actor_from_headers(req: Request, users: list[dict]) -> dict:
 @router.get("", response_model=List[UserOut])
 def list_users(request: Request):
     users = _all_users()
-    actor = _actor_from_headers(request, users)
-    return [u for u in users if can_view_user(actor, u)]
-    
+    # --- CORREÇÃO: Retorna todos os usuários para permitir o Login ---
+    # Antes: return [u for u in users if can_view_user(actor, u)]
+    return users
+    # ---------------------------------------------------------------
     
 @router.post("", response_model=UserOut, status_code=201)
 def create_user(request: Request, payload: UserCreate):
@@ -48,15 +48,16 @@ def create_user(request: Request, payload: UserCreate):
     actor = _actor_from_headers(request, users)
     
     dummy = {**payload.dict(), "id":"new", "plantIds": payload.dict().get("plantIds", [])}
+    
+    # Mantém a segurança na criação/edição
     if not can_edit_user(actor, dummy):
         raise HTTPException(403, "forbidden")
     
     if _exists_username(users, payload.username):
         raise HTTPException(status_code=409, detail="username already exists")
     
-    # ✅ Normalize supervisorId: "" → None
     supervisor_id = payload.dict().get("supervisorId", None)
-    if not supervisor_id or supervisor_id.strip() == "":
+    if not supervisor_id or str(supervisor_id).strip() == "":
         supervisor_id = None
     
     new_user = {
@@ -69,16 +70,13 @@ def create_user(request: Request, payload: UserCreate):
         "role": payload.role,
         "can_login": True,
         "plantIds": payload.dict().get("plantIds", []),
-        "supervisorId": supervisor_id,  # ✅ Agora é None ou um ID válido
+        "supervisorId": supervisor_id,
     }
     
     users.append(new_user)
     _save_users(users)
     sync_assignments_from_users()
     return new_user
-
-
-
 
 @router.put("/{user_id}", response_model=UserOut)
 def update_user(user_id: str, payload: UserUpdate, request: Request):
@@ -89,6 +87,7 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
     if not current_user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    # Mantém a segurança na edição
     actor_id = actor.get("id")
     if actor_id and actor_id == user_id:
         pass
@@ -97,7 +96,6 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
     
     update_data = payload.dict(exclude_unset=True)
     
-    # ✅ Normalize supervisorId aqui também
     if "supervisorId" in update_data:
         supervisor_id = update_data.get("supervisorId")
         if not supervisor_id or (isinstance(supervisor_id, str) and supervisor_id.strip() == ""):
@@ -116,8 +114,6 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
             return updated
     
     raise HTTPException(status_code=404, detail="User not found")
-
-
 
 @router.delete("/{user_id}")
 def delete_user(user_id: str):

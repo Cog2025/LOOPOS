@@ -1,229 +1,186 @@
 # /attachments/app/routes/plants.py
 from fastapi import APIRouter, HTTPException
-from typing import List, Dict
+from typing import List
 from uuid import uuid4
+import unicodedata
 from app.core.storage import load_json, save_json
 from app.core.schemas import PlantCreate, PlantUpdate, PlantOut, AssignmentsPayload
-from app.core.sync import sync_assignments_from_users
 
 router = APIRouter(prefix="/api/plants", tags=["plants"])
 _PLANTS_FILE = "plants.json"
-_ASSIGN_FILE = "assignments.json"
 _USERS_FILE  = "users.json"
 
-def _all_plants() -> List[dict]:
-    return load_json(_PLANTS_FILE, [])
+def normalize_str(s: str) -> str:
+    if not s: return ""
+    return unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('ASCII').upper().strip()
 
-def _save_plants(plants: List[dict]):
-    save_json(_PLANTS_FILE, plants)
+def _all_plants() -> List[dict]: return load_json(_PLANTS_FILE, [])
+def _save_plants(plants: List[dict]): save_json(_PLANTS_FILE, plants)
+def _all_users() -> List[dict]: return load_json(_USERS_FILE, [])
+def _save_users(users: List[dict]): save_json(_USERS_FILE, users)
 
-def _all_assignments() -> Dict[str, dict]:
-    return load_json(_ASSIGN_FILE, {})
-
-def _save_assignments(assignments: Dict[str, dict]):
-    save_json(_ASSIGN_FILE, assignments)
-
-def _all_users() -> List[dict]:
-    return load_json(_USERS_FILE, [])
-
-def _save_users(users: List[dict]):
-    save_json(_USERS_FILE, users)
-
-def _sync_user_plant_links(plant_id: str, ap: AssignmentsPayload):
+def _get_assignments_from_users(plant_id: str) -> dict:
     users = _all_users()
-    for u in users:
-        ids = set(u.get("plantIds", []))
-        in_assign = (
-            (u["id"] == (ap.coordinatorId or "")) or
-            (u["id"] in ap.supervisorIds) or
-            (u["id"] in ap.technicianIds) or
-            (u["id"] in ap.assistantIds)
-        )
-        old_ids = ids.copy()
-        if in_assign: ids.add(plant_id)
-        else: ids.discard(plant_id)
-        
-        # ✅ LOG MELHORADO
-        if ids != old_ids:
-            action = "adicionado" if plant_id in ids else "removido"
-            print(f"✅ Plant {plant_id} {action} de plantIds de {u.get('name')} (id: {u['id']})")
-        
-        u["plantIds"] = list(ids)
-    _save_users(users)
+    
+    result = {
+        "coordinatorId": "",
+        "supervisorIds": [],
+        "technicianIds": [],
+        "assistantIds": []
+    }
+    
+    # Debug para ver o que ele está lendo do disco
+    # print(f"🔍 DEBUG LEITURA: Lendo users.json para planta {plant_id}")
 
+    for u in users:
+        user_plants = u.get("plantIds", [])
+        if plant_id in user_plants:
+            role = normalize_str(u.get("role", ""))
+            uid = u["id"]
+            
+            # print(f"   ✅ Encontrado no disco: {u.get('name')} ({role})")
+
+            if role in ["COORDINATOR", "COORDENADOR"]:
+                result["coordinatorId"] = uid
+            elif role in ["SUPERVISOR"]:
+                result["supervisorIds"].append(uid)
+            elif role in ["TECHNICIAN", "TECNICO", "TECNICO"]: 
+                result["technicianIds"].append(uid)
+            elif role in ["ASSISTANT", "AUXILIAR"]:
+                result["assistantIds"].append(uid)
+    
+    return result
+
+def _update_users_from_assignments_payload(plant_id: str, ap: AssignmentsPayload):
+    users = _all_users()
+    changed = False
+
+    # Coleta todos os IDs que DEVEM estar nesta planta
+    # Não importa a role, se o ID veio no payload, ele tem que estar na planta.
+    ids_to_add = set()
+    if ap.coordinatorId: ids_to_add.add(ap.coordinatorId)
+    for uid in ap.supervisorIds: ids_to_add.add(uid)
+    for uid in ap.technicianIds: ids_to_add.add(uid)
+    for uid in ap.assistantIds: ids_to_add.add(uid)
+
+    print(f"📝 DEBUG ESCRITA: Atualizando planta {plant_id}")
+    print(f"   🎯 IDs que devem ter a planta: {ids_to_add}")
+
+    for u in users:
+        uid = u["id"]
+        user_plants = set(u.get("plantIds", []))
+        original_plants = user_plants.copy()
+
+        if uid in ids_to_add:
+            # Usuário deve ter a planta
+            user_plants.add(plant_id)
+        else:
+            # Usuário NÃO deve ter a planta.
+            # MAS CUIDADO: Só removemos se ele é de um cargo operacional.
+            # Se for Admin/Operador (que vê tudo), geralmente não mexemos, 
+            # mas pela lógica do seu sistema, se ele estava assignado e saiu, removemos.
+            # Para segurança, vamos remover apenas se ele TIVER a planta.
+            if plant_id in user_plants:
+                # Verifica role para não remover planta de um Admin por engano (se for o caso)
+                # Mas no seu caso, plantIds define alocação explícita, então removemos.
+                user_plants.discard(plant_id)
+
+        # Se mudou, marca para salvar
+        if user_plants != original_plants:
+            u["plantIds"] = list(user_plants)
+            changed = True
+            print(f"   🔄 Alterado user {u['name']}: {original_plants} -> {user_plants}")
+
+    if changed:
+        _save_users(users)
+        print("   💾 users.json salvo com sucesso.")
+    else:
+        print("   ℹ️ Nenhuma alteração necessária no users.json.")
+
+# --- ROTAS ---
 
 @router.get("", response_model=List[PlantOut])
 def list_plants():
     plants = _all_plants()
-    assignments = _all_assignments()
-    
-    print(f"DEBUG - plants count: {len(plants)}")
-    print(f"DEBUG - assignments: {assignments}")
-    
-    # ✅ ENRIQUECER CADA PLANTA COM ATRIBUIÇÕES
     for plant in plants:
-        plant_id = plant.get("id")
-        plant_assigns = assignments.get(plant_id, {})
-        
-        print(f"DEBUG - plant_id: {plant_id}")
-        print(f"DEBUG - plant_assigns ANTES: {plant_assigns}")
-        
-        plant["coordinatorId"] = plant_assigns.get("coordinatorId", "")
-        plant["supervisorIds"] = plant_assigns.get("supervisorIds", [])
-        plant["technicianIds"] = plant_assigns.get("technicianIds", [])
-        plant["assistantIds"] = plant_assigns.get("assistantIds", [])
-        
-        print(f"DEBUG - plant_assigns DEPOIS: {plant}")
-    
-    print(f"DEBUG - Retornando plants: {plants}")  # ✅ ADICIONE ISTO!
+        plant.update(_get_assignments_from_users(plant["id"]))
     return plants
-
-
-
-
 
 @router.post("", response_model=PlantOut, status_code=201)
 def create_plant(payload: PlantCreate):
     plants = _all_plants()
-    plant = payload.dict()
+    plant = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})
     plant["id"] = str(uuid4())
     plants.append(plant)
     _save_plants(plants)
     
-    # ✅ INICIALIZE assignments PRIMEIRO
-    assignments = _all_assignments()
-    
-    coordinatorId = getattr(payload, 'coordinatorId', None) or ""
-    supervisorIds = getattr(payload, 'supervisorIds', None) or []
-    technicianIds = getattr(payload, 'technicianIds', None) or []
-    assistantIds = getattr(payload, 'assistantIds', None) or []
-
     ap = AssignmentsPayload(
-        coordinatorId=coordinatorId,
-        supervisorIds=supervisorIds,
-        technicianIds=technicianIds,
-        assistantIds=assistantIds,
+        coordinatorId=getattr(payload, 'coordinatorId', "") or "",
+        supervisorIds=getattr(payload, 'supervisorIds', []) or [],
+        technicianIds=getattr(payload, 'technicianIds', []) or [],
+        assistantIds=getattr(payload, 'assistantIds', []) or [],
     )
-    assignments[plant["id"]] = ap.dict()
-    _save_assignments(assignments)  # ✅ CRÍTICO!
-    _sync_user_plant_links(plant["id"], ap)
-
-    # ✅ UM ÚNICO RETURN
-    return {
-        **plant,
-        "coordinatorId": coordinatorId,
-        "supervisorIds": supervisorIds,
-        "technicianIds": technicianIds,
-        "assistantIds": assistantIds,
-    }
-
-
-
+    _update_users_from_assignments_payload(plant["id"], ap)
+    return {**plant, **ap.dict()}
 
 @router.get("/{plant_id}", response_model=PlantOut)
 def get_plant(plant_id: str):
     plants = _all_plants()
     plant = next((p for p in plants if p["id"] == plant_id), None)
-    if not plant:
-        raise HTTPException(status_code=404, detail="Plant not found")
-    
-    # ✅ CARREGA ATRIBUIÇÕES DE assignments.json
-    assignments = _all_assignments().get(plant_id, {})
-    
-    return {
-        **plant,
-        "coordinatorId": assignments.get("coordinatorId", ""),
-        "supervisorIds": assignments.get("supervisorIds", []),
-        "technicianIds": assignments.get("technicianIds", []),
-        "assistantIds": assignments.get("assistantIds", []),
-    }
-
-
+    if not plant: raise HTTPException(404, "Plant not found")
+    return {**plant, **_get_assignments_from_users(plant_id)}
 
 @router.put("/{plant_id}", response_model=PlantOut)
 def update_plant(plant_id: str, payload: PlantUpdate):
+    print(f"📥 PUT RECEBIDO para planta {plant_id}")
+    
     plants = _all_plants()
+    updated_plant = None
     for i, p in enumerate(plants):
         if p["id"] == plant_id:
-            # ✅ ATUALIZA A PLANTA (excluindo atribuições)
-            plants[i] = {**p, **payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})}
-            _save_plants(plants)
-            
-            # ✅ LIDA COM ATRIBUIÇÕES DE FORMA SEGURA
-            coordinatorId = getattr(payload, 'coordinatorId', None) or ""
-            supervisorIds = getattr(payload, 'supervisorIds', None) or []
-            technicianIds = getattr(payload, 'technicianIds', None) or []
-            assistantIds = getattr(payload, 'assistantIds', None) or []
-            
-            ap = AssignmentsPayload(
-                coordinatorId=coordinatorId,
-                supervisorIds=supervisorIds,
-                technicianIds=technicianIds,
-                assistantIds=assistantIds,
-            )
-            
-            # ✅ SALVA ATRIBUIÇÕES EM assignments.json
-            assignments = _all_assignments()
-            assignments[plant_id] = ap.dict()
-            _save_assignments(assignments)
-            
-            # ✅ SINCRONIZA OS USUÁRIOS
-            _sync_user_plant_links(plant_id, ap)
-            
-            # ✅ RETORNA COM ATRIBUIÇÕES
-            return {
-                **plants[i],
-                "coordinatorId": coordinatorId,
-                "supervisorIds": supervisorIds,
-                "technicianIds": technicianIds,
-                "assistantIds": assistantIds,
-            }
-    raise HTTPException(status_code=404, detail="Plant not found")
-
-
+            data = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})
+            plants[i] = {**p, **data}
+            updated_plant = plants[i]
+            break
+    if not updated_plant: raise HTTPException(404, "Plant not found")
+    _save_plants(plants)
+    
+    # Extrai assignments do payload
+    ap = AssignmentsPayload(
+        coordinatorId=getattr(payload, 'coordinatorId', "") or "",
+        supervisorIds=getattr(payload, 'supervisorIds', []) or [],
+        technicianIds=getattr(payload, 'technicianIds', []) or [],
+        assistantIds=getattr(payload, 'assistantIds', []) or [],
+    )
+    
+    # Atualiza usuários
+    _update_users_from_assignments_payload(plant_id, ap)
+    
+    # Retorna estado atualizado lendo do disco recém salvo
+    final_state = _get_assignments_from_users(plant_id)
+    print(f"📤 PUT RETORNANDO: {final_state}")
+    
+    return {**updated_plant, **final_state}
 
 @router.delete("/{plant_id}")
 def delete_plant(plant_id: str):
     plants = _all_plants()
     new_plants = [p for p in plants if p["id"] != plant_id]
-    if len(new_plants) == len(plants):
-        raise HTTPException(status_code=404, detail="Plant not found")
+    if len(new_plants) == len(plants): raise HTTPException(404, "Plant not found")
     _save_plants(new_plants)
-    assignments = _all_assignments()
-    if plant_id in assignments:
-        # ✅ COM ARGUMENTOS PADRÃO
-        _sync_user_plant_links(
-            plant_id, 
-            AssignmentsPayload(
-                coordinatorId="",
-                supervisorIds=[],
-                technicianIds=[],
-                assistantIds=[]
-            )
-        )
-        del assignments[plant_id]
-        _save_assignments(assignments)
+    
+    # Limpa users
+    _update_users_from_assignments_payload(plant_id, AssignmentsPayload())
+    
     return {"detail": "deleted"}
-
 
 @router.get("/{plant_id}/assignments", response_model=AssignmentsPayload)
 def get_assignments(plant_id: str):
-    if not any(p["id"] == plant_id for p in _all_plants()):
-        raise HTTPException(status_code=404, detail="Plant not found")
-    a = _all_assignments().get(plant_id, {})
-    return AssignmentsPayload(
-        coordinatorId=a.get("coordinatorId", ""),  # ← String vazia, não None
-        supervisorIds=a.get("supervisorIds", []),
-        technicianIds=a.get("technicianIds", []),
-        assistantIds=a.get("assistantIds", []),
-    )
+    if not any(p["id"] == plant_id for p in _all_plants()): raise HTTPException(404, "Plant not found")
+    return _get_assignments_from_users(plant_id)
 
 @router.put("/{plant_id}/assignments", response_model=AssignmentsPayload)
 def put_assignments(plant_id: str, payload: AssignmentsPayload):
-    if not any(p["id"] == plant_id for p in _all_plants()):
-        raise HTTPException(status_code=404, detail="Plant not found")
-    assignments = _all_assignments()
-    assignments[plant_id] = payload.dict()
-    _save_assignments(assignments)
-    _sync_user_plant_links(plant_id, payload)
+    if not any(p["id"] == plant_id for p in _all_plants()): raise HTTPException(404, "Plant not found")
+    _update_users_from_assignments_payload(plant_id, payload)
     return payload

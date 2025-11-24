@@ -2,7 +2,10 @@
 # App FastAPI principal — adiciona rotas de usuários e usinas.
 # Mantém suas rotas existentes (OS, anexos etc) e inclui os novos routers.
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from app.core.storage import load_json
+from app.core.security import create_access_token
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import List
@@ -52,6 +55,45 @@ UPLOAD_ROOT = Path(os.getenv(
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 app.mount("/files", StaticFiles(directory=UPLOAD_ROOT), name="files")
 
+
+@app.post("/api/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    # 1. Carrega usuários do JSON (Lado do servidor, seguro)
+    users = load_json("users.json", [])
+    
+    # 2. Procura o usuário
+    user = next((u for u in users if u["username"].lower() == form_data.username.lower()), None)
+    
+    # 3. Valida senha (no servidor!)
+    if not user or user["password"] != form_data.password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuário ou senha incorretos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.get("can_login", True):
+        raise HTTPException(status_code=400, detail="Usuário inativo")
+
+    # 4. Gera o Token (Crachá)
+    # Guardamos o ID e a Role no token para o frontend usar depois
+    access_token = create_access_token(
+        data={"sub": user["id"], "role": user["role"], "name": user["name"]}
+    )
+    
+    # 5. Retorna o token e os dados do usuário (SEM A SENHA)
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "username": user["username"],
+            "email": user.get("email"),
+            "role": user["role"],
+            "plantIds": user.get("plantIds", [])
+        }
+    }
 
 @app.get("/api/health")
 def health():

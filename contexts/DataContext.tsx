@@ -344,24 +344,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updatePlant = async (plant: Plant, assignments?: AssignmentsDTO): Promise<void> => {
     try {
+      // 1. Prepara o Payload
+      const payload = {
+        ...plant,
+        coordinatorId: assignments?.coordinatorId || "",
+        supervisorIds: assignments?.supervisorIds || [],
+        technicianIds: assignments?.technicianIds || [],
+        assistantIds: assignments?.assistantIds || [],
+      };
+      
+      console.log("📡 [DataContext] PUT Payload Final:", JSON.stringify(payload));
+
+      // 2. Envia para o Backend
       const res = await api(`/api/plants/${plant.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(plant),
+        body: JSON.stringify(payload),
       });
+      
       if (!res.ok) throw new Error();
+      
+      // 3. Atualiza a lista de Plantas localmente
       const saved: Plant = await res.json();
       setPlants(prev => prev.map(p => (p.id === saved.id ? normalizePlant(saved) : p)));
-      if (assignments) {
-        await putAssignments(saved.id, {
-          coordinatorId: assignments.coordinatorId ?? null,
-          supervisorIds: assignments.supervisorIds || [],
-          technicianIds: assignments.technicianIds || [],
-          assistantIds: assignments.assistantIds || [],
-        });
-      }
-    } catch {
-      setPlants(prev => prev.map(p => (p.id === plant.id ? normalizePlant(plant) : p)));
+
+      // 🔴 CORREÇÃO: Recarrega TUDO da API para garantir que a lista de USERS
+      // também reflita as mudanças nos vínculos (plantIds dentro de cada user).
+      await reloadFromAPI(); 
+      
+    } catch (error) {
+      console.error("Erro ao atualizar planta", error);
     }
   };
 

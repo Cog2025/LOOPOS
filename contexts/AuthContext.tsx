@@ -4,17 +4,14 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User } from '../types';
-// O AuthProvider consome o DataContext para (1) ler usuários de mock/backend e (2) injetar headers após login.
 import { useData } from './DataContext';
 
-// Interface pública do contexto de autenticação.
 interface AuthContextType {
   user: User | null;
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
-// Contexto interno e hook de acesso.
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = (): AuthContextType => {
@@ -27,72 +24,62 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(() => {
     try {
       const raw = localStorage.getItem('currentUser');
-      if (raw) {
-        const parsed = JSON.parse(raw) as User;
-        console.log('👤 Usuário recuperado do localStorage:', parsed.name);
-        return parsed;
-      }
-    } catch (error) {
-      console.error('Erro ao recuperar usuário:', error);
-    }
+      if (raw) return JSON.parse(raw) as User;
+    } catch { }
     return null;
   });
 
-  // ✅ Pega tudo que precisa NO ESCOPO DO COMPONENTE
-  const { users, setAuthHeaders, reloadFromAPI, clearData, loadUserData } = useData();
+  const { setAuthHeaders, reloadFromAPI, clearData } = useData();
 
-  /**
-   * Sincroniza headers (RBAC) e recarrega dados do backend após login.
-   */
   useEffect(() => {
-    if (user) {
-      console.log('🔐 Injetando headers de autenticação...');
-      setAuthHeaders({ 'X-User-Id': user.id, 'X-Role': user.role });
-      
-      // ✅ AGORA reloadFromAPI() é chamado automaticamente
+    // Recupera o token salvo
+    const token = localStorage.getItem('token');
+    if (user && token) {
+      // Configura o header para todas as requisições futuras
+      setAuthHeaders({ 
+        'X-User-Id': user.id, 
+        'X-Role': user.role,
+        // Em um sistema JWT real, usaríamos: 'Authorization': `Bearer ${token}`
+        // Mas como seu backend usa headers customizados por enquanto, mantemos o X-User-Id
+        // Se quiser migrar 100%, o backend teria que ler o Bearer token.
+      });
       reloadFromAPI();
-    } else {
-      setAuthHeaders({});
     }
   }, [user, setAuthHeaders, reloadFromAPI]);
 
-  const login = async (identifier: string, password: string) => {
-    const id = identifier.trim().toLowerCase();
+  const login = async (username: string, password: string) => {
+    // O FastAPI espera x-www-form-urlencoded para o OAuth2PasswordRequestForm
+    const formData = new URLSearchParams();
+    formData.append('username', username);
+    formData.append('password', password);
 
-    let found = users.find(
-      (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
-    );
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData,
+      });
 
-    if (!found && users.length === 0) {
-      try {
-        console.log('📦 Users vazio, carregando do JSON...');
-        const r = await fetch('/data/users.json');
-        if (r.ok) {
-          const data: User[] = await r.json();
-          found = data.find(
-            (u) => u.username?.toLowerCase() === id || u.email?.toLowerCase() === id
-          );
-        }
-      } catch (error) {
-        console.error('Erro ao carregar JSON:', error);
+      if (!res.ok) {
+        throw new Error('Usuário ou senha inválidos');
       }
+
+      const data = await res.json();
+      
+      // Salva o token e o usuário
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('currentUser', JSON.stringify(data.user));
+      setUser(data.user);
+
+    } catch (error) {
+      console.error(error);
+      throw error;
     }
-
-    const effectivePwd = (found as any)?.password;
-
-    if (!found || effectivePwd !== password) {
-      throw new Error('Usuário ou senha inválidos');
-    }
-
-    // ✅ SIMPLES: Apenas seta o usuário
-    setUser(found);
-    localStorage.setItem('currentUser', JSON.stringify(found));
-    
-    // ✅ O useEffect acima vai detectar a mudança e chamar reloadFromAPI()
   };
 
   const logout = () => {
     localStorage.removeItem('currentUser');
+    localStorage.removeItem('token');
     clearData();
     setUser(null);
   };
