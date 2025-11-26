@@ -9,8 +9,8 @@ import { OS, OSStatus } from '../types';
 import Column from './Column';
 // Importa constantes usadas para os títulos das colunas e a ordem dos status.
 import { STATUS_COLUMN_TITLES, OS_STATUSES } from '../constants';
-import { useData } from '@/contexts/DataContext';
-import { useAuth } from '@/contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
+import { useAuth } from '../contexts/AuthContext';
 
 // Define as propriedades que o componente Board espera receber do Dashboard.
 interface BoardProps {
@@ -37,16 +37,44 @@ const Board: React.FC<BoardProps> = ({ osList, onUpdateOS, onCardClick, onOpenDo
         // Se não houver destino (o item foi solto fora de uma coluna) ou se o item voltou para a mesma posição, não faz nada.
         if (!destination || (destination.droppableId === source.droppableId && destination.index === source.index)) {
             return;
-            }
+        }
+
+        // Se soltar na coluna "FUTURAS", a gente ignora (para não mudar status para algo inválido)
+        if (destination.droppableId === 'FUTURE') return;
 
         // Encontra a OS que foi movida.
         const osToMove = visibleOS.find(os => os.id === draggableId);
         if (osToMove) {
-            // Obtém o novo status a partir do ID da coluna de destino.
-            const newStatus = destination.droppableId as OSStatus;
+            // Prepara atualização
+            const updates: Partial<OS> = { status: destination.droppableId as OSStatus };
+            
+            // Se veio de FUTURAS para PENDENTES, a data deveria atualizar para HOJE
+            if (source.droppableId === 'FUTURE' && destination.droppableId === OSStatus.PENDING) {
+                updates.startDate = new Date().toISOString();
+            }
+
             // Chama a função de atualização do DataContext para persistir a mudança de status.
-            onUpdateOS({ ...osToMove, status: newStatus });
+            onUpdateOS({ ...osToMove, ...updates });
         }
+    };
+
+    // Helper para verificar datas futuras
+    const isFuture = (dateStr: string) => {
+        const date = new Date(dateStr);
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // Fim de hoje
+        return date > today;
+    };
+
+    // Separa as OSs Pendentes em "Atuais" e "Futuras"
+    const futureOS = visibleOS.filter(os => os.status === OSStatus.PENDING && isFuture(os.startDate));
+    
+    // Função auxiliar para filtrar OS da coluna (excluindo futuras se for Pendente)
+    const getColumnOS = (status: OSStatus) => {
+        if (status === OSStatus.PENDING) {
+            return visibleOS.filter(os => os.status === status && !isFuture(os.startDate));
+        }
+        return visibleOS.filter(os => os.status === status);
     };
 
     // O JSX do painel.
@@ -54,15 +82,30 @@ const Board: React.FC<BoardProps> = ({ osList, onUpdateOS, onCardClick, onOpenDo
         // `DragDropContext` é o componente que envolve toda a área onde o drag-and-drop é permitido.
         <DragDropContext onDragEnd={onDragEnd}>
             <div className="flex h-full p-4 space-x-4 overflow-x-auto">
+                
+                {/* 1. Coluna Especial: AGENDADAS (Futuras) */}
+                {/* Usamos um ID 'FUTURE' para o Droppable para diferenciar */}
+                <Column
+                    key="FUTURE"
+                    status={OSStatus.PENDING} // Usa status base pendente
+                    title={`📅 Agendadas (> Hoje)`}
+                    osList={futureOS}
+                    onCardClick={onCardClick}
+                    onOpenDownloadFilter={onOpenDownloadFilter}
+                    isFutureColumn={true} // Prop nova para estilizar diferente
+                />
+
                 {/* Mapeia a lista de status para criar uma coluna para cada um. */}
                 {OS_STATUSES.map(status => {
                     // Filtra a lista de OS para obter apenas as que pertencem a esta coluna (status).
-                    const osInColumn = visibleOS.filter(os => os.status === status);
+                    const osInColumn = getColumnOS(status);
+                    const title = status === OSStatus.PENDING ? "Pendentes (A Vencer)" : STATUS_COLUMN_TITLES[status];
+
                     return (
                         <Column
                             key={status}
                             status={status}
-                            title={STATUS_COLUMN_TITLES[status]}
+                            title={title}
                             osList={osInColumn}
                             onCardClick={onCardClick}
                             onOpenDownloadFilter={onOpenDownloadFilter}

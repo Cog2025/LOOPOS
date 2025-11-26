@@ -6,6 +6,7 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Role } from '../types';
+import { ViewType } from './Dashboard';
 
 const UsersIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -19,6 +20,8 @@ interface SidebarProps {
   isCollapsed: boolean;
   setIsCollapsed: (isCollapsed: boolean) => void;
   setModalConfig: (config: any) => void;
+  currentView: ViewType;
+  setCurrentView: (view: ViewType) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -27,6 +30,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed,
   setIsCollapsed,
   setModalConfig,
+  currentView,
+  setCurrentView,
 }) => {
   const { user, logout } = useAuth();
 
@@ -45,6 +50,50 @@ const Sidebar: React.FC<SidebarProps> = ({
   // --- ITENS DE NAVEGAÇÃO ---
   // Renderiza menus conforme a função do usuário e RBAC
   const navItems = [
+    // ============ NAVEGAÇÃO PRINCIPAL (VIEWS) ============
+    {
+      title: 'Kanban',
+      onClick: () => {
+        setCurrentView('KANBAN');
+        setMobileOpen(false);
+      },
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+        </svg>
+      ),
+      show: true,
+      isActive: currentView === 'KANBAN',
+    },
+    {
+      title: 'Cronograma 52 Semanas',
+      onClick: () => {
+        setCurrentView('SCHEDULE_52_WEEKS');
+        setMobileOpen(false);
+      },
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      ),
+      show: true,
+      isActive: currentView === 'SCHEDULE_52_WEEKS',
+    },
+    {
+      title: 'Calendário',
+      onClick: () => {
+        setCurrentView('CALENDAR');
+        setMobileOpen(false);
+      },
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ),
+      show: true,
+      isActive: currentView === 'CALENDAR',
+    },
+    // ============ GERENCIAMENTO ============
     // ============ GERENCIAMENTO DE USUÁRIOS POR PAPEL ============
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
         ? [
@@ -155,7 +204,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             key={item.title}
             onClick={item.onClick}
-            className="w-full flex items-center px-4 py-2 text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"
+            className={`w-full flex items-center px-4 py-2 rounded-md transition-colors ${
+              (item.isActive ?? false)
+                ? 'bg-blue-500 text-white dark:bg-blue-600'
+                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+            }`}
           >
             {item.icon}
             {!isCollapsed && <span className="ml-3">{item.title}</span>}

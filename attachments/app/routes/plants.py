@@ -1,26 +1,22 @@
 # /attachments/app/routes/plants.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
 from typing import List
 from uuid import uuid4
 import unicodedata
-from app.core.storage import load_json, save_json
+from app.core.database import get_db
+from app.core import models
 from app.core.schemas import PlantCreate, PlantUpdate, PlantOut, AssignmentsPayload
 
 router = APIRouter(prefix="/api/plants", tags=["plants"])
-_PLANTS_FILE = "plants.json"
-_USERS_FILE  = "users.json"
 
 def normalize_str(s: str) -> str:
     if not s: return ""
     return unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('ASCII').upper().strip()
 
-def _all_plants() -> List[dict]: return load_json(_PLANTS_FILE, [])
-def _save_plants(plants: List[dict]): save_json(_PLANTS_FILE, plants)
-def _all_users() -> List[dict]: return load_json(_USERS_FILE, [])
-def _save_users(users: List[dict]): save_json(_USERS_FILE, users)
-
-def _get_assignments_from_users(plant_id: str) -> dict:
-    users = _all_users()
+def _get_assignments_from_users(db: Session, plant_id: str) -> dict:
+    # SQL: Busca todos os usuários
+    users = db.query(models.User).all()
     
     result = {
         "coordinatorId": "",
@@ -29,17 +25,14 @@ def _get_assignments_from_users(plant_id: str) -> dict:
         "assistantIds": []
     }
     
-    # Debug para ver o que ele está lendo do disco
-    # print(f"🔍 DEBUG LEITURA: Lendo users.json para planta {plant_id}")
-
     for u in users:
-        user_plants = u.get("plantIds", [])
+        # No SQL, plantIds já vem como lista graças ao tipo JSON do SQLAlchemy
+        user_plants = u.plantIds or []
+        
         if plant_id in user_plants:
-            role = normalize_str(u.get("role", ""))
-            uid = u["id"]
+            role = normalize_str(u.role)
+            uid = u.id
             
-            # print(f"   ✅ Encontrado no disco: {u.get('name')} ({role})")
-
             if role in ["COORDINATOR", "COORDENADOR"]:
                 result["coordinatorId"] = uid
             elif role in ["SUPERVISOR"]:
@@ -51,136 +44,146 @@ def _get_assignments_from_users(plant_id: str) -> dict:
     
     return result
 
-def _update_users_from_assignments_payload(plant_id: str, ap: AssignmentsPayload):
-    users = _all_users()
+def _update_users_from_assignments_payload(db: Session, plant_id: str, ap: AssignmentsPayload):
+    users = db.query(models.User).all()
     changed = False
 
     # Coleta todos os IDs que DEVEM estar nesta planta
-    # Não importa a role, se o ID veio no payload, ele tem que estar na planta.
     ids_to_add = set()
     if ap.coordinatorId: ids_to_add.add(ap.coordinatorId)
     for uid in ap.supervisorIds: ids_to_add.add(uid)
     for uid in ap.technicianIds: ids_to_add.add(uid)
     for uid in ap.assistantIds: ids_to_add.add(uid)
 
-    print(f"📝 DEBUG ESCRITA: Atualizando planta {plant_id}")
-    print(f"   🎯 IDs que devem ter a planta: {ids_to_add}")
+    print(f"📝 [SQL] Atualizando usuários para planta {plant_id}")
 
     for u in users:
-        uid = u["id"]
-        user_plants = set(u.get("plantIds", []))
+        uid = u.id
+        # Copia a lista para um set para manipulação
+        user_plants = set(u.plantIds or [])
         original_plants = user_plants.copy()
 
         if uid in ids_to_add:
-            # Usuário deve ter a planta
             user_plants.add(plant_id)
         else:
-            # Usuário NÃO deve ter a planta.
-            # MAS CUIDADO: Só removemos se ele é de um cargo operacional.
-            # Se for Admin/Operador (que vê tudo), geralmente não mexemos, 
-            # mas pela lógica do seu sistema, se ele estava assignado e saiu, removemos.
-            # Para segurança, vamos remover apenas se ele TIVER a planta.
             if plant_id in user_plants:
-                # Verifica role para não remover planta de um Admin por engano (se for o caso)
-                # Mas no seu caso, plantIds define alocação explícita, então removemos.
                 user_plants.discard(plant_id)
 
-        # Se mudou, marca para salvar
         if user_plants != original_plants:
-            u["plantIds"] = list(user_plants)
+            # Importante: No SQLAlchemy, para atualizar JSON, é bom reatribuir a lista
+            u.plantIds = list(user_plants)
+            # Marcamos o objeto como "sujo" para garantir o update, embora o SQLAlchemy geralmente detecte
+            db.add(u)
             changed = True
-            print(f"   🔄 Alterado user {u['name']}: {original_plants} -> {user_plants}")
+            print(f"   🔄 SQL Alterado user {u.name}")
 
     if changed:
-        _save_users(users)
-        print("   💾 users.json salvo com sucesso.")
-    else:
-        print("   ℹ️ Nenhuma alteração necessária no users.json.")
+        db.commit()
 
 # --- ROTAS ---
 
 @router.get("", response_model=List[PlantOut])
-def list_plants():
-    plants = _all_plants()
-    for plant in plants:
-        plant.update(_get_assignments_from_users(plant["id"]))
-    return plants
+def list_plants(db: Session = Depends(get_db)):
+    plants = db.query(models.Plant).all()
+    # Convertemos para dicionário para poder injetar os assignments calculados
+    results = []
+    for p in plants:
+        # Pydantic from_attributes converte o model SQL para dict se usarmos __dict__ ou similar,
+        # mas aqui precisamos injetar campos extras.
+        # Vamos criar um dict base e adicionar os assignments.
+        p_dict = {c.name: getattr(p, c.name) for c in p.__table__.columns}
+        assigns = _get_assignments_from_users(db, p.id)
+        results.append({**p_dict, **assigns})
+        
+    return results
 
 @router.post("", response_model=PlantOut, status_code=201)
-def create_plant(payload: PlantCreate):
-    plants = _all_plants()
-    plant = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})
-    plant["id"] = str(uuid4())
-    plants.append(plant)
-    _save_plants(plants)
+def create_plant(payload: PlantCreate, db: Session = Depends(get_db)):
+    # Separa dados da planta dos assignments
+    plant_data = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})
     
-    ap = AssignmentsPayload(
-        coordinatorId=getattr(payload, 'coordinatorId', "") or "",
-        supervisorIds=getattr(payload, 'supervisorIds', []) or [],
-        technicianIds=getattr(payload, 'technicianIds', []) or [],
-        assistantIds=getattr(payload, 'assistantIds', []) or [],
+    new_plant = models.Plant(
+        id=str(uuid4()),
+        **plant_data
     )
-    _update_users_from_assignments_payload(plant["id"], ap)
-    return {**plant, **ap.dict()}
+    db.add(new_plant)
+    db.commit()
+    db.refresh(new_plant)
+    
+    # Assignments
+    ap = AssignmentsPayload(
+        coordinatorId=payload.coordinatorId,
+        supervisorIds=payload.supervisorIds,
+        technicianIds=payload.technicianIds,
+        assistantIds=payload.assistantIds,
+    )
+    _update_users_from_assignments_payload(db, new_plant.id, ap)
+    
+    # Monta resposta
+    p_dict = {c.name: getattr(new_plant, c.name) for c in new_plant.__table__.columns}
+    return {**p_dict, **ap.dict()}
 
 @router.get("/{plant_id}", response_model=PlantOut)
-def get_plant(plant_id: str):
-    plants = _all_plants()
-    plant = next((p for p in plants if p["id"] == plant_id), None)
-    if not plant: raise HTTPException(404, "Plant not found")
-    return {**plant, **_get_assignments_from_users(plant_id)}
+def get_plant(plant_id: str, db: Session = Depends(get_db)):
+    plant = db.query(models.Plant).filter(models.Plant.id == plant_id).first()
+    if not plant:
+        raise HTTPException(status_code=404, detail="Plant not found")
+    
+    p_dict = {c.name: getattr(plant, c.name) for c in plant.__table__.columns}
+    assigns = _get_assignments_from_users(db, plant_id)
+    return {**p_dict, **assigns}
 
 @router.put("/{plant_id}", response_model=PlantOut)
-def update_plant(plant_id: str, payload: PlantUpdate):
-    print(f"📥 PUT RECEBIDO para planta {plant_id}")
+def update_plant(plant_id: str, payload: PlantUpdate, db: Session = Depends(get_db)):
+    plant = db.query(models.Plant).filter(models.Plant.id == plant_id).first()
+    if not plant:
+        raise HTTPException(status_code=404, detail="Plant not found")
     
-    plants = _all_plants()
-    updated_plant = None
-    for i, p in enumerate(plants):
-        if p["id"] == plant_id:
-            data = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})
-            plants[i] = {**p, **data}
-            updated_plant = plants[i]
-            break
-    if not updated_plant: raise HTTPException(404, "Plant not found")
-    _save_plants(plants)
+    # Atualiza dados da planta
+    update_data = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'}, exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(plant, key, value)
     
-    # Extrai assignments do payload
+    db.commit()
+    db.refresh(plant)
+    
+    # Atualiza usuários (Assignments)
     ap = AssignmentsPayload(
-        coordinatorId=getattr(payload, 'coordinatorId', "") or "",
-        supervisorIds=getattr(payload, 'supervisorIds', []) or [],
-        technicianIds=getattr(payload, 'technicianIds', []) or [],
-        assistantIds=getattr(payload, 'assistantIds', []) or [],
+        coordinatorId=payload.coordinatorId,
+        supervisorIds=payload.supervisorIds,
+        technicianIds=payload.technicianIds,
+        assistantIds=payload.assistantIds,
     )
+    _update_users_from_assignments_payload(db, plant_id, ap)
     
-    # Atualiza usuários
-    _update_users_from_assignments_payload(plant_id, ap)
-    
-    # Retorna estado atualizado lendo do disco recém salvo
-    final_state = _get_assignments_from_users(plant_id)
-    print(f"📤 PUT RETORNANDO: {final_state}")
-    
-    return {**updated_plant, **final_state}
+    p_dict = {c.name: getattr(plant, c.name) for c in plant.__table__.columns}
+    assigns = _get_assignments_from_users(db, plant_id)
+    return {**p_dict, **assigns}
 
 @router.delete("/{plant_id}")
-def delete_plant(plant_id: str):
-    plants = _all_plants()
-    new_plants = [p for p in plants if p["id"] != plant_id]
-    if len(new_plants) == len(plants): raise HTTPException(404, "Plant not found")
-    _save_plants(new_plants)
+def delete_plant(plant_id: str, db: Session = Depends(get_db)):
+    plant = db.query(models.Plant).filter(models.Plant.id == plant_id).first()
+    if not plant:
+        raise HTTPException(status_code=404, detail="Plant not found")
     
-    # Limpa users
-    _update_users_from_assignments_payload(plant_id, AssignmentsPayload())
+    db.delete(plant)
     
+    # Limpa referências nos usuários
+    _update_users_from_assignments_payload(db, plant_id, AssignmentsPayload())
+    
+    db.commit()
     return {"detail": "deleted"}
 
 @router.get("/{plant_id}/assignments", response_model=AssignmentsPayload)
-def get_assignments(plant_id: str):
-    if not any(p["id"] == plant_id for p in _all_plants()): raise HTTPException(404, "Plant not found")
-    return _get_assignments_from_users(plant_id)
+def get_assignments(plant_id: str, db: Session = Depends(get_db)):
+    # Verifica se planta existe
+    if not db.query(models.Plant).filter(models.Plant.id == plant_id).first():
+        raise HTTPException(status_code=404, detail="Plant not found")
+    return _get_assignments_from_users(db, plant_id)
 
 @router.put("/{plant_id}/assignments", response_model=AssignmentsPayload)
-def put_assignments(plant_id: str, payload: AssignmentsPayload):
-    if not any(p["id"] == plant_id for p in _all_plants()): raise HTTPException(404, "Plant not found")
-    _update_users_from_assignments_payload(plant_id, payload)
+def put_assignments(plant_id: str, payload: AssignmentsPayload, db: Session = Depends(get_db)):
+    if not db.query(models.Plant).filter(models.Plant.id == plant_id).first():
+        raise HTTPException(status_code=404, detail="Plant not found")
+    _update_users_from_assignments_payload(db, plant_id, payload)
     return payload

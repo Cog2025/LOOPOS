@@ -10,178 +10,93 @@ import { OS } from '../types';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import Board from './Board';
+import Calendar from './Calendar';
+import Schedule52Weeks from './Schedule52Weeks';
 import OSDetailModal from './modals/OSDetailModal';
 import OSForm from './modals/OSForm';
 import ManagementModal from './modals/ManagementModal';
 import UserForm from './modals/UserForm';
 import PlantForm from './modals/PlantForm';
 import DownloadModal from './modals/DownloadModal';
+import ScheduleOSModal from './modals/ScheduleOSModal';
 
-// --- TIPOS ---
-// Define a estrutura de configuração para abrir um modal.
-// Inclui todos os tipos de modais da aplicação (OS, gerenciamento de usuários/usinas, downloads).
+export type ViewType = 'KANBAN' | 'CALENDAR' | 'SCHEDULE_52_WEEKS';
+
 interface ModalConfig {
-  type: 'OS_DETAIL' | 'OS_FORM' | 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM' | 'DOWNLOAD_FILTER';
-  data?: any; // Dados a serem passados para o modal (ex: a OS a ser editada, usuário a editar, etc.).
+  type: 'OS_DETAIL' | 'OS_FORM' | 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM' | 'DOWNLOAD_FILTER' | 'SCHEDULE_RECURRENCE';
+  data?: any;
 }
 
-// --- COMPONENTE PRINCIPAL ---
 const Dashboard: React.FC = () => {
-  // Acessa os dados e funções do contexto principal.
-  const { osList, updateOS } = useData();
+  // ✅ CORREÇÃO: Extraindo plants e users para a busca funcionar
+  const { osList, updateOS, plants, users } = useData();
 
-  // --- ESTADOS ---
-  // Controla a visibilidade e estado da UI.
-  const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false); // Visibilidade da sidebar em telas pequenas (drawer).
-  const [isSidebarCollapsed, setSidebarCollapsed] = useState(false); // Estado de recolhimento da sidebar no desktop (collapse icon).
-  const [searchTerm, setSearchTerm] = useState(''); // Termo de busca inserido no cabeçalho para filtrar OSs.
-  const [modalConfig, setModalConfig] = useState<ModalConfig | null>(null); // Configuração do modal atualmente aberto, ou nulo se nenhum.
+  const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [modalConfig, setModalConfig] = useState<ModalConfig | null>(null);
+  const [currentView, setCurrentView] = useState<ViewType>('KANBAN');
 
-  // --- FILTROS E MEMOIZAÇÃO ---
-  // `useMemo` otimiza a performance filtrando as OSs apenas quando a lista ou o termo de busca mudam.
+  // 🔥 LÓGICA DE FILTRO CORRIGIDA
   const filteredOS = useMemo(() => {
-    if (!searchTerm) return osList; // Se a busca estiver vazia, retorna todas as OSs.
-    // Filtra as OSs cujo título ou ID contenham o termo de busca (ignorando maiúsculas/minúsculas).
-    return osList.filter(os =>
-      os.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      os.id.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [osList, searchTerm]);
+    if (!searchTerm.trim()) return osList;
+    
+    const terms = searchTerm.toLowerCase().split(' ').filter(t => t);
 
-  // --- MANIPULADORES DE MODAIS ---
-  // Funções para abrir/fechar e configurar modais.
+    return osList.filter(os => {
+        const plant = plants.find(p => p.id === os.plantId);
+        const tech = users.find(u => u.id === os.technicianId);
+        const sup = users.find(u => u.id === os.supervisorId);
+
+        const searchableText = [
+            os.title,
+            os.id,
+            os.activity,
+            os.description,
+            plant?.name,
+            plant?.client,
+            tech?.name,
+            sup?.name
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        return terms.every(term => searchableText.includes(term));
+    });
+  }, [osList, searchTerm, plants, users]);
+
   const handleCloseModal = () => setModalConfig(null);
   const handleNewOS = () => setModalConfig({ type: 'OS_FORM' });
   const handleCardClick = (os: OS) => setModalConfig({ type: 'OS_DETAIL', data: os });
   const handleOpenDownloadFilter = () => setModalConfig({ type: 'DOWNLOAD_FILTER' });
+  const handleOpenScheduler = () => setModalConfig({ type: 'SCHEDULE_RECURRENCE' });
 
-  // --- RENDERIZAÇÃO DE MODAIS ---
-  // Função que renderiza o modal correto com base na configuração atual em `modalConfig`.
   const renderModal = () => {
     if (!modalConfig) return null;
-
-    // Um `switch` decide qual componente de modal renderizar baseado no tipo.
     switch (modalConfig.type) {
-      // Detalhe de uma OS existente
-      case 'OS_DETAIL':
-        return (
-          <OSDetailModal
-            isOpen={true}
-            onClose={handleCloseModal}
-            os={modalConfig.data}
-            setModalConfig={setModalConfig}
-          />
-        );
-
-      // Formulário para criar ou editar uma OS
-      case 'OS_FORM':
-        return (
-          <OSForm
-            isOpen={true}
-            onClose={handleCloseModal}
-            initialData={modalConfig.data}
-          />
-        );
-
-      // Gerenciamento de usuários ou usinas (lista + forms aninhados).
-      // Encaminha a própria config para o ManagementModal, que orquestra lista e forms internos.
+      case 'OS_DETAIL': return <OSDetailModal isOpen={true} onClose={handleCloseModal} os={modalConfig.data} setModalConfig={setModalConfig} />;
+      case 'OS_FORM': return <OSForm isOpen={true} onClose={handleCloseModal} initialData={modalConfig.data} />;
       case 'MANAGE_USERS':
-      case 'MANAGE_PLANTS':
-        // Type guard: garante que modalConfig é do tipo esperado antes de passar para ManagementModal
-        if (
-          modalConfig.type === 'MANAGE_USERS' ||
-          modalConfig.type === 'MANAGE_PLANTS'
-        ) {
-          return (
-            <ManagementModal
-              isOpen={true}
-              onClose={handleCloseModal}
-              config={modalConfig as ManagementModalConfig}
-              setModalConfig={(newConfig) =>
-                setModalConfig(newConfig ? (newConfig as ModalConfig) : null)
-              }
-            />
-          );
-        }
-        return null;
-
-      // Formulário para criar ou editar um usuário (dentro do ManagementModal).
-      // Permite voltar para a tela anterior (lista de usuários) ao fechar o form.
-      case 'USER_FORM': {
-        const parentConfigForUser = modalConfig.data?.parentConfig || null;
-        return (
-          <UserForm
-            isOpen={true}
-            onClose={() => setModalConfig(parentConfigForUser)}
-            initialData={modalConfig.data?.user}
-            role={modalConfig.data?.role}
-          />
-        );
-      }
-
-      // Formulário para criar ou editar uma usina (dentro do ManagementModal).
-      // Permite voltar para a tela anterior (lista de usinas) ao fechar o form.
-      // Passa presetClient quando o fluxo vem do PlantList (criar usina para cliente específico).
-      case 'PLANT_FORM': {
-        const parentConfigForPlant = modalConfig.data?.parentConfig || null;
-        return (
-          <PlantForm
-            isOpen={true}
-            onClose={() => setModalConfig(parentConfigForPlant)}
-            initialData={modalConfig.data?.plant}
-            presetClient={modalConfig.data?.presetClient}
-          />
-        );
-      }
-
-      // Modal de filtros e download de dados
-      case 'DOWNLOAD_FILTER':
-        return <DownloadModal isOpen={true} onClose={handleCloseModal} />;
-
-      // Fallback para tipos desconhecidos
-      default:
-        return null;
+      case 'MANAGE_PLANTS': return <ManagementModal isOpen={true} onClose={handleCloseModal} config={modalConfig as ManagementModalConfig} setModalConfig={(newConfig) => setModalConfig(newConfig ? (newConfig as ModalConfig) : null)} />;
+      case 'USER_FORM': return <UserForm isOpen={true} onClose={() => setModalConfig(modalConfig.data?.parentConfig)} initialData={modalConfig.data?.user} role={modalConfig.data?.role} />;
+      case 'PLANT_FORM': return <PlantForm isOpen={true} onClose={() => setModalConfig(modalConfig.data?.parentConfig)} initialData={modalConfig.data?.plant} presetClient={modalConfig.data?.presetClient} />;
+      case 'DOWNLOAD_FILTER': return <DownloadModal isOpen={true} onClose={handleCloseModal} />;
+      case 'SCHEDULE_RECURRENCE': return <ScheduleOSModal isOpen={true} onClose={handleCloseModal} />;
+      default: return null;
     }
   };
 
-  // --- RENDER JSX ---
-  // Estrutura do layout principal da aplicação: sidebar + conteúdo (header + board) + modal.
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
-      {/* Barra lateral: navegação por papel, gerenciamento de usuários/usinas e logout */}
-      <Sidebar
-        isMobileOpen={isMobileSidebarOpen}
-        setMobileOpen={setMobileSidebarOpen}
-        isCollapsed={isSidebarCollapsed}
-        setIsCollapsed={setSidebarCollapsed}
-        setModalConfig={setModalConfig}
-      />
-
-      {/* Conteúdo principal: header + painel Kanban */}
+      <Sidebar isMobileOpen={isMobileSidebarOpen} setMobileOpen={setMobileSidebarOpen} isCollapsed={isSidebarCollapsed} setIsCollapsed={setSidebarCollapsed} setModalConfig={setModalConfig} currentView={currentView} setCurrentView={setCurrentView} />
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Cabeçalho: menu mobile, busca e botão "Nova OS" */}
-        <Header
-          onMenuClick={() => setMobileSidebarOpen(true)}
-          onNewOSClick={handleNewOS}
-          searchTerm={searchTerm}
-          setSearchTerm={setSearchTerm}
-        />
-
-        {/* Painel Kanban: exibe OSs em colunas por status */}
-        <main className="flex-1 overflow-x-auto overflow-y-hidden">
-          <Board
-            osList={filteredOS} // Passa a lista já filtrada por termo de busca
-            onUpdateOS={updateOS}
-            onCardClick={handleCardClick}
-            onOpenDownloadFilter={handleOpenDownloadFilter}
-          />
+        <Header onMenuClick={() => setMobileSidebarOpen(true)} onNewOSClick={handleNewOS} searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+        <main className="flex-1 overflow-x-auto overflow-y-hidden relative">
+          {currentView === 'KANBAN' && <Board osList={filteredOS} onUpdateOS={updateOS} onCardClick={handleCardClick} onOpenDownloadFilter={handleOpenDownloadFilter} />}
+          {currentView === 'CALENDAR' && <Calendar osList={filteredOS} onCardClick={handleCardClick} />}
+          {currentView === 'SCHEDULE_52_WEEKS' && <Schedule52Weeks osList={filteredOS} onCardClick={handleCardClick} onOpenScheduler={handleOpenScheduler} />}
         </main>
       </div>
-
-      {/* Renderiza o modal que estiver ativo baseado em modalConfig */}
       {renderModal()}
     </div>
   );
 };
-
 export default Dashboard;

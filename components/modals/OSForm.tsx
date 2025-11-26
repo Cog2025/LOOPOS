@@ -8,42 +8,28 @@ import { OS, OSStatus, Priority, Role, ImageAttachment } from '../../types';
 import Modal from './Modal';
 import { OS_ACTIVITIES } from '../../constants';
 
-// Define as propriedades que o formulário de OS espera receber.
 interface OSFormProps {
   isOpen: boolean;
   onClose: () => void;
-  initialData?: OS; // Dados da OS a ser editada. Se ausente, é um formulário de criação.
+  initialData?: OS;
 }
 
 type NewAttachmentDraft = {
   id: string;
   file: File;
   caption: string;
+  previewUrl: string;
 };
 
 const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
-  // Acessa contextos de autenticação e dados.
   const { user } = useAuth();
-  const { plants, users, addOS, updateOS } = useData();
+  const { plants, users, addOS, updateOS, addOSAttachment, deleteOSAttachment } = useData();
   const isEditing = !!initialData;
 
-  // Padronização de classes com contraste e foco visíveis (WCAG 1.4.3, 1.4.11 e 2.4.7).
-  const inputClasses =
-    "input w-full text-slate-900 dark:text-slate-100 placeholder-slate-600 dark:placeholder-slate-300 " +
-    "bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-500 " +
-    "hover:border-slate-400 dark:hover:border-slate-400 " +
-    "focus-visible:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 " +
-    "disabled:bg-slate-200 dark:disabled:bg-slate-700 disabled:text-slate-600 dark:disabled:text-slate-400 " +
-    "caret-sky-600 dark:caret-sky-400";
+  // Estilos aprimorados
+  const inputClasses = "input w-full text-slate-900 dark:text-white bg-white dark:bg-slate-700 border-slate-300 dark:border-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent rounded-md placeholder-slate-400 dark:placeholder-slate-300";
+  const labelClasses = "block text-sm font-bold text-slate-700 dark:text-slate-200 mb-1";
 
-  const readOnlyClasses =
-    "input w-full bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200 " +
-    "border-slate-300 dark:border-slate-600 cursor-not-allowed";
-
-  const groupLabelClasses = "block text-sm font-medium text-slate-800 dark:text-slate-100 mb-1";
-  const helperTextMuted = "text-sm text-slate-600 dark:text-slate-300";
-
-  // Função para definir o estado inicial do formulário.
   const getInitialFormData = (os?: OS) => {
     if (os) {
       return {
@@ -61,54 +47,49 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
     };
   };
 
-  // Estados do formulário.
   const [formData, setFormData] = useState(getInitialFormData(initialData));
   const [currentAttachments, setCurrentAttachments] = useState<ImageAttachment[]>([]);
-
-  // Rascunhos de novos anexos com legenda por arquivo (legenda inicia vazia).
   const [newAttachmentsDraft, setNewAttachmentsDraft] = useState<NewAttachmentDraft[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  // `useEffect` para resetar o estado do formulário quando o modal é aberto.
   useEffect(() => {
     if (isOpen) {
       setFormData(getInitialFormData(initialData));
       setCurrentAttachments(initialData?.imageAttachments || []);
-    } else {
-      setNewAttachmentsDraft([]); // limpa rascunhos ao fechar.
+      setNewAttachmentsDraft([]);
     }
   }, [initialData, isOpen]);
 
-  // `useMemo` otimiza a performance, recalculando a lista de técnicos apenas quando a usina selecionada ou a lista de usuários muda.
+  useEffect(() => {
+    return () => {
+        newAttachmentsDraft.forEach(draft => URL.revokeObjectURL(draft.previewUrl));
+    };
+  }, [newAttachmentsDraft]);
+
   const availableTechnicians = useMemo(() => {
     if (!formData.plantId) return [];
     return users.filter(u => u.role === Role.TECHNICIAN && u.plantIds?.includes(formData.plantId));
   }, [formData.plantId, users]);
 
-  // `useMemo` para encontrar o supervisor do técnico selecionado.
   const supervisorForSelectedTech = useMemo(() => {
     if (!formData.technicianId) return null;
     const tech = users.find(u => u.id === formData.technicianId);
     return users.find(u => u.id === tech?.supervisorId) || null;
   }, [formData.technicianId, users]);
 
-  // `useEffect` para limpar a seleção de técnico/supervisor quando a usina muda no formulário de criação.
   useEffect(() => {
     if (!isEditing) {
       setFormData(prev => ({ ...prev, technicianId: '', supervisorId: '' }));
     }
   }, [formData.plantId, isEditing]);
 
-  // `useEffect` para preencher automaticamente o supervisor quando um técnico é selecionado.
   useEffect(() => {
     setFormData(prev => ({...prev, supervisorId: supervisorForSelectedTech?.id || ''}));
   }, [supervisorForSelectedTech]);
 
-  // Busca os ativos disponíveis para a usina selecionada.
   const selectedPlant = plants.find(p => p.id === formData.plantId);
   const availableAssets = selectedPlant?.assets || [];
 
-  // Manipuladores de eventos do formulário.
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
@@ -118,80 +99,74 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
   const handleAssetToggle = (asset: string) => {
     setFormData(prev => ({
       ...prev,
-      assets: prev.assets.includes(asset)
-        ? prev.assets.filter(a => a !== asset)
-        : [...prev.assets, asset]
+      assets: prev.assets.includes(asset) ? prev.assets.filter(a => a !== asset) : [...prev.assets, asset]
     }));
   };
 
-  // Edita legenda de anexo existente inline.
-  const handleExistingCaptionChange = (id: string, caption: string) => {
-    setCurrentAttachments(prev => prev.map(a => a.id === id ? { ...a, caption } : a));
-  };
-
-  // Seleção de arquivos -> cria rascunhos com legenda vazia (placeholder será exibido).
   const handleFilesSelected = (filesList: FileList | null) => {
-    const files = filesList ? Array.from(filesList) : [];
-    setNewAttachmentsDraft(files.map((file, i) => ({
+    if (!filesList) return;
+    const files = Array.from(filesList);
+    
+    const newDrafts = files.map((file, i) => ({
       id: `draft-${Date.now()}-${i}`,
       file,
-      caption: "" // iniciar vazio para mostrar apenas o placeholder
-    })));
+      caption: "",
+      previewUrl: URL.createObjectURL(file)
+    }));
+    
+    setNewAttachmentsDraft(prev => [...prev, ...newDrafts]);
   };
 
-  // Converte rascunhos para anexos definitivos (sem fallback para nome do arquivo).
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''; // ex.: http://127.0.0.1:8000
-const FILES_BASE = import.meta.env.VITE_FILES_BASE_URL ?? API_BASE; // ex.: http://127.0.0.1:8000
+  const handleRemoveDraft = (id: string) => {
+    setNewAttachmentsDraft(prev => prev.filter(draft => draft.id !== id));
+  };
 
-const handleAddAttachments = async () => {
-  if (newAttachmentsDraft.length === 0 || !user || !isEditing || !initialData) return; // [web:148]
-  setIsUploading(true); // [web:148]
-  try {
-    const fd = new FormData();
+  const handleUploadAll = async () => {
+    if (newAttachmentsDraft.length === 0 || !initialData) return;
+    setIsUploading(true);
+
+    const finalFD = new FormData();
     newAttachmentsDraft.forEach(d => {
-      fd.append('files', d.file);
-      fd.append('captions', d.caption ?? '');
-    }); // [web:148]
-    const url = API_BASE ? `${API_BASE}/api/os/${initialData.id}/attachments` : `/api/os/${initialData.id}/attachments`; // [web:181]
-    const res = await fetch(url, { method: 'POST', body: fd }); // [web:148]
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Falha no upload (${res.status}): ${text}`); // [web:148]
+        finalFD.append('files', d.file);
+        finalFD.append('captions', d.caption);
+    });
+
+    try {
+        const res = await fetch(`/api/os/${initialData.id}/attachments`, { method: 'POST', body: finalFD });
+        if (res.ok) {
+            const saved = await res.json();
+            saved.forEach((att: any) => addOSAttachment(initialData.id, att));
+            setCurrentAttachments(prev => [...prev, ...saved]);
+            setNewAttachmentsDraft([]);
+            alert("Upload realizado com sucesso!");
+        } else {
+            alert("Erro no upload.");
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Erro de conexão.");
+    } finally {
+        setIsUploading(false);
     }
-    const saved: ImageAttachment[] = await res.json(); // [{id,url,caption,uploadedAt}] [web:148]
-    // Se o backend retornar URL relativa (/files/...), prefixe com FILES_BASE.
-    const normalized = saved.map(a => ({
-      ...a,
-      url: a.url.startsWith('http') ? a.url : `${FILES_BASE}${a.url}`
-    })); // [web:148]
-    setCurrentAttachments(prev => [...prev, ...normalized]); // [web:148]
-    setNewAttachmentsDraft([]); // [web:148]
-  } catch (err) {
-    console.error('Upload error:', err);
-    alert('Não foi possível enviar as imagens. Verifique se o servidor está rodando e o proxy está configurado.'); // [web:175]
-  } finally {
-    setIsUploading(false); // garante sair do estado “Adicionando...”. [web:148]
-  }
-};
+  };
 
+  const handleDeleteExisting = async (attId: string) => {
+    if (!initialData || !confirm("Excluir este anexo permanentemente?")) return;
+    try {
+        await fetch(`/api/os/${initialData.id}/attachments/${attId}`, { method: "DELETE" });
+        deleteOSAttachment(initialData.id, attId);
+        setCurrentAttachments(prev => prev.filter(a => a.id !== attId));
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao excluir.");
+    }
+  };
 
-
-
-    // Remoção (botão de lixeira)
-    const handleDeleteAttachment = async (attachmentId: string) => {
-        if (!isEditing || !initialData) return;
-        await fetch(`/api/os/${initialData.id}/attachments/${attachmentId}`, { method: "DELETE" });
-        setCurrentAttachments(prev => prev.filter(att => att.id !== attachmentId));
-    };
-
-
-
-  // Submete o formulário.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const osData = { ...formData, startDate: new Date(formData.startDate).toISOString() };
     if (isEditing) {
-      updateOS({ ...initialData, ...osData, imageAttachments: currentAttachments });
+      updateOS({ ...initialData, ...osData });
     } else {
       addOS(osData);
     }
@@ -205,226 +180,160 @@ const handleAddAttachments = async () => {
       title={isEditing ? `Editar OS: ${initialData?.id}` : 'Nova Ordem de Serviço'}
       footer={
         <>
-          <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
-          <button type="submit" form="os-form" className="btn-primary ml-3">Salvar</button>
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200">Cancelar</button>
+          <button type="submit" form="os-form" className="ml-3 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">Salvar Dados</button>
         </>
       }
     >
-      <form id="os-form" onSubmit={handleSubmit} className="space-y-4">
-        <select
-          name="activity"
-          value={formData.activity}
-          onChange={handleChange}
-          required
-          className={`${inputClasses} dark:bg-slate-900 dark:border-slate-700`}
-          aria-label="Atividade Principal"
-        >
-          <option value="">Selecione a Atividade Principal</option>
-          {OS_ACTIVITIES.map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-
-        <textarea
-          name="description"
-          placeholder="Descrição detalhada"
-          value={formData.description}
-          onChange={handleChange}
-          required
-          className={`${inputClasses} min-h-[100px] bg-slate-50 dark:bg-slate-950 dark:border-slate-700`}
-          aria-label="Descrição detalhada"
-        />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <select
-            name="priority"
-            value={formData.priority}
-            onChange={handleChange}
-            className={`${inputClasses} dark:bg-slate-900 dark:border-slate-700`}
-            aria-label="Prioridade"
-          >
-            {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-
-          <input
-            type="date"
-            name="startDate"
-            value={formData.startDate}
-            onChange={handleChange}
-            required
-            className={`${inputClasses} dark:bg-slate-900 dark:border-slate-700`}
-            aria-label="Data de início"
-          />
-
-          <select
-            name="plantId"
-            value={formData.plantId}
-            onChange={handleChange}
-            required
-            className={`${inputClasses} dark:bg-slate-900 dark:border-slate-700`}
-            aria-label="Usina"
-          >
-            <option value="">Selecione a Usina</option>
-            {plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-
-          <select
-            name="technicianId"
-            value={formData.technicianId}
-            onChange={handleChange}
-            required
-            className={`${inputClasses} dark:bg-slate-900 dark:border-slate-700`}
-            disabled={!formData.plantId}
-            aria-label="Técnico"
-          >
-            <option value="">Selecione o Técnico</option>
-            {availableTechnicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-
-          <div>
-            <label className={groupLabelClasses}>Supervisor</label>
-            <input
-              type="text"
-              value={supervisorForSelectedTech?.name || 'Selecione um técnico'}
-              readOnly
-              className={readOnlyClasses}
-              aria-label="Supervisor"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className={groupLabelClasses}>Ativos Envolvidos</label>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 p-2 border dark:border-slate-600 rounded-md max-h-48 overflow-y-auto mt-1">
-            {availableAssets.length > 0 ? (
-              availableAssets.map(asset => (
-                <label key={asset} className="flex items-center space-x-2 text-xs cursor-pointer text-slate-900 dark:text-slate-100">
-                  <input
-                    type="checkbox"
-                    checked={formData.assets.includes(asset)}
-                    onChange={() => handleAssetToggle(asset)}
-                    className="rounded border-slate-400 dark:border-slate-500 focus:ring-2 focus:ring-sky-500"
-                  />
-                  <span>{asset}</span>
-                </label>
-              ))
-            ) : (
-              <p className={`${helperTextMuted} col-span-full text-center py-4`}>
-                Selecione uma usina para ver os ativos.
-              </p>
-            )}
-          </div>
-        </div>
-
-        <label className="flex items-center space-x-2 text-slate-900 dark:text-slate-100">
-          <input
-            type="checkbox"
-            name="attachmentsEnabled"
-            checked={formData.attachmentsEnabled}
-            onChange={handleChange}
-            className="rounded border-slate-400 dark:border-slate-500 focus:ring-2 focus:ring-sky-500"
-          />
-          <span className="text-sm">Permitir anexos de imagem</span>
-        </label>
-
-        {isEditing && formData.attachmentsEnabled && (
-          <div className="pt-4 border-t dark:border-slate-600">
-            <h4 className="font-semibold mb-2 text-slate-900 dark:text-slate-100">Anexos</h4>
-
-            {/* Lista de anexos existentes com legenda editável */}
-            <div className="space-y-2 mb-4">
-              {currentAttachments.map(att => (
-                <div key={att.id} className="flex items-center justify-between bg-slate-100 dark:bg-slate-700 p-2 rounded">
-                  <div className="flex items-center min-w-0 gap-3 w-full">
-                    <img src={att.url} alt={att.caption} className="w-10 h-10 object-cover rounded flex-shrink-0" />
-                    <input
-                      type="text"
-                      value={att.caption}
-                      onChange={(e) => handleExistingCaptionChange(att.id, e.target.value)}
-                      className="input text-sm w-full bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-sky-500"
-                      aria-label="Legenda do anexo"
-                      placeholder="Legenda deste anexo"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteAttachment(att.id)}
-                    className="ml-3 text-red-600 hover:text-red-700 p-1 flex-shrink-0 focus:ring-2 focus:ring-red-500 rounded"
-                    aria-label="Remover anexo"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-              {currentAttachments.length === 0 && (
-                <p className={helperTextMuted}>Nenhum anexo.</p>
-              )}
+      <div className="space-y-6">
+          <form id="os-form" onSubmit={handleSubmit} className="space-y-4">
+            
+            {/* Campo Atividade */}
+            <div>
+                <label className={labelClasses}>Atividade Principal</label>
+                <select name="activity" value={formData.activity} onChange={handleChange} required className={inputClasses}>
+                    <option value="">Selecione a Atividade</option>
+                    {OS_ACTIVITIES.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
             </div>
-
-            {/* Painel de novos anexos (rascunhos) com botão de upload acessível e legenda individual */}
-            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-800 rounded-md">
-              <h5 className="font-semibold text-sm text-slate-900 dark:text-slate-100">Adicionar Novo Anexo</h5>
-
-              <div className="flex items-center gap-2">
-                <label
-                  htmlFor="os-new-images"
-                  className="inline-flex items-center justify-center px-3 py-2 rounded-md
-                             bg-sky-600 text-white hover:bg-sky-700
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500
-                             ring-offset-2 ring-offset-slate-900 cursor-pointer"
-                >
-                  Selecionar Imagens
-                </label>
-                <input
-                  id="os-new-images"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e) => handleFilesSelected(e.target.files)}
-                  className="sr-only"
+            
+            {/* Campo Descrição */}
+            <div>
+                <label className={labelClasses}>Descrição Detalhada</label>
+                <textarea 
+                    name="description" 
+                    placeholder="Descreva o trabalho a ser realizado..." 
+                    value={formData.description} 
+                    onChange={handleChange} 
+                    required 
+                    className={`${inputClasses} min-h-[80px]`} 
                 />
-                <span className="text-sm text-slate-700 dark:text-slate-200 truncate w-full">
-                  {newAttachmentsDraft.length > 0
-                    ? `${newAttachmentsDraft.length} arquivo(s) selecionado(s)`
-                    : 'Nenhum arquivo selecionado.'}
-                </span>
-              </div>
-
-              {newAttachmentsDraft.length > 0 && (
-                <div className="space-y-2">
-                  {newAttachmentsDraft.map(draft => (
-                    <div key={draft.id} className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
-                      <span className="text-xs text-slate-600 dark:text-slate-300 truncate md:col-span-1">
-                        {draft.file.name}
-                      </span>
-                      <input
-                        type="text"
-                        value={draft.caption}
-                        onChange={(e) =>
-                          setNewAttachmentsDraft(prev =>
-                            prev.map(x => x.id === draft.id ? { ...x, caption: e.target.value } : x)
-                          )
-                        }
-                        placeholder="Legenda desta imagem"
-                        className={`${inputClasses} md:col-span-2 dark:bg-slate-900 dark:border-slate-700`}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={handleAddAttachments}
-                disabled={newAttachmentsDraft.length === 0 || isUploading}
-                className="btn-primary w-full disabled:bg-slate-400"
-              >
-                {isUploading ? 'Adicionando...' : 'Adicionar'}
-              </button>
             </div>
-          </div>
-        )}
-      </form>
+            
+            {/* Grid Prioridade e Data */}
+            <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className={labelClasses}>Prioridade</label>
+                    <select name="priority" value={formData.priority} onChange={handleChange} className={inputClasses}>
+                        {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className={labelClasses}>Data de Início</label>
+                    <input type="date" name="startDate" value={formData.startDate} onChange={handleChange} required className={inputClasses} />
+                 </div>
+            </div>
+
+            {/* Grid Usina e Técnico */}
+            <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className={labelClasses}>Usina</label>
+                    <select name="plantId" value={formData.plantId} onChange={handleChange} required className={inputClasses} disabled={isEditing}>
+                        <option value="">Selecione a Usina</option>
+                        {plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className={labelClasses}>Técnico Responsável</label>
+                    <select name="technicianId" value={formData.technicianId} onChange={handleChange} required className={inputClasses}>
+                        <option value="">Selecione o Técnico</option>
+                        {availableTechnicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                 </div>
+            </div>
+            
+            {/* Ativos */}
+            <div>
+                <label className={labelClasses}>Ativos Envolvidos</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 p-2 border border-slate-300 dark:border-slate-500 rounded-md max-h-32 overflow-y-auto bg-gray-50 dark:bg-slate-800">
+                    {availableAssets.length > 0 ? availableAssets.map(asset => (
+                    <label key={asset} className="flex items-center space-x-2 text-xs cursor-pointer">
+                        <input type="checkbox" checked={formData.assets.includes(asset)} onChange={() => handleAssetToggle(asset)} className="rounded text-blue-600 focus:ring-blue-500" />
+                        <span className="dark:text-gray-300">{asset}</span>
+                    </label>
+                    )) : <p className="text-xs text-gray-500 col-span-full text-center py-2">Selecione uma usina para ver os ativos.</p>}
+                </div>
+            </div>
+
+          </form>
+
+          {/* SEÇÃO DE ANEXOS (Só aparece na edição) */}
+          {isEditing && (
+            <div className="border-t pt-6 dark:border-gray-700">
+                <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-3 flex items-center">
+                    <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2 py-0.5 rounded dark:bg-blue-900 dark:text-blue-300 mr-2">ANEXOS</span>
+                    Galeria de Imagens
+                </h4>
+                
+                {/* Lista de Existentes */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                    {currentAttachments.map(att => (
+                        <div key={att.id} className="relative group rounded-md overflow-hidden border dark:border-gray-600 shadow-sm">
+                            <img src={att.url} className="w-full h-24 object-cover" />
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-1 flex justify-between items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <span className="text-[10px] text-white truncate max-w-[70%]">{att.caption || 'Sem legenda'}</span>
+                                <button type="button" onClick={() => handleDeleteExisting(att.id)} className="text-red-400 hover:text-red-200 p-1" title="Excluir">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {currentAttachments.length === 0 && (
+                        <div className="col-span-2 text-center py-4 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
+                            <p className="text-xs text-gray-500">Nenhum anexo nesta OS.</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Área de Upload */}
+                <div className="bg-blue-50 dark:bg-slate-800/50 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="flex items-center gap-3 mb-3">
+                        <label htmlFor="file-upload" className="cursor-pointer bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            Selecionar Fotos
+                        </label>
+                        <input id="file-upload" type="file" multiple accept="image/*" onChange={(e) => handleFilesSelected(e.target.files)} className="hidden" />
+                        <span className="text-xs text-gray-600 dark:text-gray-400 font-medium">{newAttachmentsDraft.length > 0 ? `${newAttachmentsDraft.length} arquivo(s) selecionado(s)` : 'Nenhum arquivo selecionado'}</span>
+                    </div>
+
+                    {/* Lista de Rascunhos */}
+                    {newAttachmentsDraft.length > 0 && (
+                        <div className="space-y-2 mb-3 max-h-48 overflow-y-auto pr-1">
+                            {newAttachmentsDraft.map(draft => (
+                                <div key={draft.id} className="flex items-center gap-3 bg-white dark:bg-slate-700 p-2 rounded border dark:border-slate-600 shadow-sm">
+                                    <img src={draft.previewUrl} className="w-10 h-10 object-cover rounded border dark:border-gray-600" />
+                                    <input 
+                                        type="text" 
+                                        value={draft.caption} 
+                                        onChange={(e) => setNewAttachmentsDraft(prev => prev.map(d => d.id === draft.id ? { ...d, caption: e.target.value } : d))}
+                                        placeholder="Legenda..." 
+                                        className="flex-1 text-xs px-2 py-1.5 border rounded dark:bg-slate-800 dark:border-gray-600 dark:text-white focus:ring-1 focus:ring-blue-500"
+                                    />
+                                    <button onClick={() => handleRemoveDraft(draft.id)} className="text-gray-400 hover:text-red-500 p-1 transition-colors">✕</button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {newAttachmentsDraft.length > 0 && (
+                        <button 
+                            type="button" 
+                            onClick={handleUploadAll} 
+                            disabled={isUploading}
+                            className="w-full bg-green-600 text-white py-2.5 rounded-md font-bold hover:bg-green-700 disabled:bg-gray-400 transition-all shadow-md flex justify-center items-center"
+                        >
+                            {isUploading ? (
+                                <>
+                                    <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    Enviando...
+                                </>
+                            ) : `⬆️ Fazer Upload Agora`}
+                        </button>
+                    )}
+                </div>
+            </div>
+          )}
+      </div>
     </Modal>
   );
 };

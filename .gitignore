@@ -1,4 +1,6 @@
-# Logs
+#arquivo .gitignore
+
+# --- LOGS ---
 logs
 *.log
 npm-debug.log*
@@ -7,12 +9,47 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# --- NODE / FRONTEND ---
 node_modules
 dist
 dist-ssr
-*.local
+coverage
 
-# Editor directories and files
+# --- PYTHON / BACKEND (Fundamental) ---
+__pycache__/
+*.py[cod]
+*$py.class
+# Ambientes virtuais (se você criar um no futuro)
+venv/
+.venv/
+env/
+.env/
+
+# --- BANCO DE DADOS (Crítico) ---
+*.db
+*.sqlite3
+# Arquivos temporários do SQLite (lock)
+*.db-journal
+*.db-wal
+
+# --- ARQUIVOS DE AMBIENTE (Segurança) ---
+# Ignora todos os .env que possam conter senhas
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# --- UPLOADS E DADOS ---
+# Ignora as imagens enviadas pelos usuários, mas mantém a pasta
+attachments/images/*
+!attachments/images/.gitkeep
+
+# Ignora a pasta de dados do backend (onde fica o banco), mas mantém a pasta
+attachments/data/*
+!attachments/data/.gitkeep
+
+# --- IDE / EDITOR ---
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -21,4 +58,8 @@ dist-ssr
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.swp
+
+# --- SISTEMA OPERACIONAL ---
+Thumbs.db
+Desktop.ini
