@@ -43,8 +43,8 @@ export const DEFAULT_PLANT_ASSETS: string[] = [
 
 // Lista de todas as atividades principais que podem ser selecionadas ao criar uma nova Ordem de Serviço.
 export const OS_ACTIVITIES: string[] = [
-    'Acompanhamento concessionária', 'Comissionamento', 'Inspeção', 'Inspeção anual',
-    'Inspeção mensal', 'Inspeção semestral', 'Instalação de equipamento', 'Limpeza',
+    'Acompanhamento concessionária', 'Comissionamento', 'Inspeção', 'Inspeção anual', 'Inspeção semestral',
+    'Inspeção mensal', 'Inspeção semanal', 'Instalação de equipamento', 'Limpeza',
     'Manutenção corretiva', 'Manutenção preditiva', 'Manutenção preventiva', 'Religamento',
     'Religamento DJBT', 'Religamento DJMT', 'Religamento QGBT', 'Religamento à vazio',
     'Teste de curva IV', 'Testes', 'Testes de religamento remoto', 'Troca de equipamento'

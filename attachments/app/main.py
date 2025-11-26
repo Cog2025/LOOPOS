@@ -1,7 +1,4 @@
 # /attachments/app/main.py
-# App FastAPI principal — adiciona rotas de usuários e usinas.
-# Mantém suas rotas existentes (OS, anexos etc) e inclui os novos routers.
-
 print("🔄 [DEBUG] Iniciando imports do main.py...")
 from app.core.database import engine, get_db
 from app.core import models
@@ -12,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse # ✅ Necessário para servir o React
 from typing import List
 from pathlib import Path
 from datetime import datetime
@@ -34,12 +32,8 @@ from os_api import router as os_router
 
 app = FastAPI(title="LoopOS Attachments API", version="1.0.0")
 
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://192.168.18.68:3000",
-    "http://192.168.18.68:8000",  # Adicione esta linha também para garantir
-]
+# Em produção na rede local, liberar tudo facilita.
+ALLOWED_ORIGINS = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,27 +45,24 @@ app.add_middleware(
     max_age=600,
 )
 
+# --- 1. ROTAS DA API (Prioridade Alta) ---
 app.include_router(os_router)
 app.include_router(users_router)
 app.include_router(plants_router)
 
-# --- CONFIGURAÇÃO DE DIRETÓRIOS (SEGURANÇA) ---
-
-# 1. Diretório Raiz (Onde fica tudo, inclusive o banco)
+# Configuração de diretórios
 BASE_ATTACHMENTS = Path(os.getenv(
     "NEXTCLOUD_ATTACHMENTS_DIR",
     r"C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\attachments"
 ))
-
-# 2. Diretório Público (Apenas Imagens) - Alterado para apontar para /images
 UPLOAD_ROOT = BASE_ATTACHMENTS / "images"
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
-# 3. Servir arquivos estáticos APENAS da pasta de imagens
-# Se alguém tentar acessar ../data/loopos.db, receberá 404 porque "data" não está dentro de "images"
+# Serve as imagens enviadas pelos usuários
 app.mount("/files", StaticFiles(directory=UPLOAD_ROOT), name="files")
 
 
+# --- ROTAS DE LOGIN ---
 @app.post("/api/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
@@ -100,8 +91,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def health():
     return {"ok": True}
 
-# --- ROTAS DE ANEXOS (Usam UPLOAD_ROOT que agora é .../attachments/images) ---
-
+# --- ROTAS DE ANEXOS (Com persistência SQL) ---
 @app.post("/api/os/{os_id}/attachments")
 async def upload_attachments(
     os_id: str,
@@ -148,7 +138,6 @@ async def upload_attachments(
 
     return saved_attachments
 
-
 @app.delete("/api/os/{os_id}/attachments/{att_id}")
 def delete_attachment(os_id: str, att_id: str, db: Session = Depends(get_db)):
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
@@ -174,16 +163,15 @@ def delete_attachment(os_id: str, att_id: str, db: Session = Depends(get_db)):
             
     return {"ok": True}
 
-# --- ROTAS DE NOTIFICAÇÕES (SQL) ---
 
+# --- ROTAS DE NOTIFICAÇÕES ---
 @app.get("/api/notifications", response_model=List[NotificationOut])
 def list_notifications(
-    x_user_id: str = Header(None), # Pega o ID do usuário logado pelo Header
+    x_user_id: str = Header(None),
     db: Session = Depends(get_db)
 ):
     if not x_user_id:
         return []
-    # Retorna apenas as notificações DESTE usuário
     return db.query(models.Notification).filter(models.Notification.userId == x_user_id).all()
 
 @app.post("/api/notifications", response_model=NotificationOut)
@@ -204,3 +192,25 @@ def mark_notification_read(notif_id: str, db: Session = Depends(get_db)):
         n.read = True
         db.commit()
     return {"ok": True}
+
+
+# --- 2. SERVIR O FRONTEND (Última Prioridade) ---
+# Caminho para a pasta 'dist' gerada pelo 'npm run build'
+DIST_DIR = Path(__file__).resolve().parents[2] / "dist"
+
+if DIST_DIR.exists():
+    print(f"✅ [DEBUG] Pasta dist encontrada em: {DIST_DIR}")
+    
+    # Serve os assets (CSS, JS, imagens do site)
+    app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
+
+    # Rota "Catch-All": Pega qualquer URL e devolve o index.html
+    @app.get("/{full_path:path}")
+    async def serve_react_app(full_path: str):
+        file_path = DIST_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(DIST_DIR / "index.html")
+else:
+    print(f"⚠️ [AVISO] Pasta 'dist' não encontrada em {DIST_DIR}.")
+    print("   O frontend não será servido. Execute 'npm run build' na pasta raiz.")

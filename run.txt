@@ -2,5 +2,10 @@ PS C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\attachme
 
 PS C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\attachments> uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 10 --log-level debug
 
+PS C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\attachments> uvicorn app.main:app --host 0.0.0.0 --port 80
+
 PS C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS> npm run dev
 
+PS C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS> npm run build
+
+PS C:\CloudFlare> .\cloudflared.exe tunnel --url http://localhost:80

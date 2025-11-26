@@ -46,7 +46,7 @@ const Login: React.FC = () => {
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900 dark:text-white">
             LOOP.OS Manager
           </h2>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">Seja Bem-vindo!</p>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">Seja Bem-vindo(a)!</p>
         </div>
 
         {/* Formulário de login */}
@@ -101,13 +101,19 @@ const Login: React.FC = () => {
 
           {/* Dicas de login para facilitar testes (mock) */}
           <div className="text-center text-xs text-gray-500 dark:text-gray-400">
-            <p>Admin: admin@admin.com / admin</p>
-            <p>Supervisor: maria@supervisor.com / 123</p>
-            <p>Supervisor: ana@supervisor.com / 123</p>
-            <p>Técnico: carlos@technician.com / 123</p>
-            <p>Técnico: joao@technician.com / 123</p>
-            <p>Técnico: pedro@technician.com / 123</p>
-            <p>Operador: luiza@operator.com / 123</p>
+            <p>Para acessar o sistema, entre em contato com o COG via:</p>
+            <p>E-mail: cog@loopservices.com.br</p>
+            <p>
+              Whatsapp:
+              <a
+                href="https://api.whatsapp.com/send/?phone=5541998330048"
+                target="_blank" // Abre o link em uma nova aba
+                rel="noopener noreferrer" // Recomendado para segurança ao usar target="_blank"
+                className="ml-1 text-blue-500 hover:text-blue-400 dark:text-blue-400 dark:hover:text-blue-300 font-medium" // Estilos Tailwind para o link
+              >
+                +55 (41) 99833-0048
+              </a>
+            </p>
           </div>
         </form>
       </div>

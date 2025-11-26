@@ -8,7 +8,12 @@ import React, { createContext, useContext, useState, ReactNode, useCallback } fr
 import { OS, User, Plant, Notification, OSLog, ImageAttachment, Role } from '../types';
 import { DEFAULT_PLANT_ASSETS } from '../constants';
 
-const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';
+/*const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';*/
+// ✅ CORREÇÃO: Se estiver em DEV, usa o .env ou localhost:8000.
+// Se estiver em PRODUÇÃO (build), usa string vazia (caminho relativo).
+const API_BASE: string = import.meta.env.DEV 
+    ? (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000')
+    : '';
 
 interface AssignmentsDTO {
   coordinatorId: string | null;
