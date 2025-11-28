@@ -248,7 +248,8 @@ const UserForm: React.FC<UserFormProps> = ({ isOpen, onClose, initialData, role 
           </select>
         </FormField>
 
-        {(formData.role === Role.TECHNICIAN || formData.role === Role.SUPERVISOR) && (
+        {/* ✅ AQUI ESTÁ A CORREÇÃO: Adicionado Role.ASSISTANT na condição para permitir seleção de usinas */}
+        {(formData.role === Role.TECHNICIAN || formData.role === Role.SUPERVISOR || formData.role === Role.ASSISTANT) && (
           <FormField label="Usinas Associadas">
             <div className="grid grid-cols-2 gap-2 p-3 border dark:border-gray-600 rounded-md max-h-32 overflow-y-auto">
               {plants.map(plant => (
