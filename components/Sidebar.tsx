@@ -5,8 +5,7 @@
 
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Role } from '../types';
-import { ViewType } from './Dashboard';
+import { Role, ViewType } from '../types'; // ✅ Importação correta do types.ts
 
 const UsersIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -35,28 +34,21 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { user, logout } = useAuth();
 
-  // --- RÓTULOS ---
-  // Mapa de rótulos amigáveis para exibir na UI
   const roleLabelMap: Record<string, string> = {
-    ADMIN: 'Admin',
-    SUPERVISOR: 'Supervisor',
-    TECHNICIAN: 'Técnico',
-    OPERATOR: 'Operador',
-    COORDINATOR: 'Coordenador',
-    ASSISTANT: 'Auxiliar',
+    [Role.ADMIN]: 'Admin',
+    [Role.SUPERVISOR]: 'Supervisor',
+    [Role.TECHNICIAN]: 'Técnico',
+    [Role.OPERATOR]: 'Operador',
+    [Role.COORDINATOR]: 'Coordenador',
+    [Role.ASSISTANT]: 'Auxiliar',
+    [Role.CLIENT]: 'Cliente',
   };
   const roleLabel = roleLabelMap[user?.role ?? ''] ?? '—';
 
-  // --- ITENS DE NAVEGAÇÃO ---
-  // Renderiza menus conforme a função do usuário e RBAC
   const navItems = [
-    // ============ NAVEGAÇÃO PRINCIPAL (VIEWS) ============
     {
       title: 'Kanban',
-      onClick: () => {
-        setCurrentView('KANBAN');
-        setMobileOpen(false);
-      },
+      onClick: () => { setCurrentView('KANBAN'); setMobileOpen(false); },
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
@@ -67,10 +59,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       title: 'Cronograma 52 Semanas',
-      onClick: () => {
-        setCurrentView('SCHEDULE_52_WEEKS');
-        setMobileOpen(false);
-      },
+      onClick: () => { setCurrentView('SCHEDULE_52_WEEKS'); setMobileOpen(false); },
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -81,10 +70,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       title: 'Calendário',
-      onClick: () => {
-        setCurrentView('CALENDAR');
-        setMobileOpen(false);
-      },
+      onClick: () => { setCurrentView('CALENDAR'); setMobileOpen(false); },
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -93,81 +79,65 @@ const Sidebar: React.FC<SidebarProps> = ({
       show: true,
       isActive: currentView === 'CALENDAR',
     },
-    // ============ GERENCIAMENTO ============
-    // ============ GERENCIAMENTO DE USUÁRIOS POR PAPEL ============
+    {
+      title: 'Planos de Manutenção',
+      onClick: () => { setCurrentView('MAINTENANCE_PLANS'); setMobileOpen(false); },
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+        </svg>
+      ),
+      show: user?.role !== Role.CLIENT, 
+      isActive: currentView === 'MAINTENANCE_PLANS',
+    },
+
+    // ============ GERENCIAMENTO DE USUÁRIOS ============
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
-        ? [
-            { 
+        ? [{ 
             title: 'Administradores', 
             onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Administradores', roles: [Role.ADMIN] } }), 
-            icon: <UsersIcon />,
-            show: true 
-            },
-        ]
-        : []),
-
+            icon: <UsersIcon />, show: true 
+          }] : []),
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
-    ? [
-        { 
-          title: 'Operadores', 
-          onClick: () => setModalConfig({ 
-            type: 'MANAGE_USERS', 
-            data: { title: 'Operadores', roles: [Role.OPERATOR] } 
-          }), 
-          icon: <UsersIcon />,
-          show: true 
-        },
-    ]
-    : []),
-    
+        ? [{ 
+            title: 'Operadores', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Operadores', roles: [Role.OPERATOR] } }), 
+            icon: <UsersIcon />, show: true 
+          }] : []),
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR
-        ? [
-            { 
+        ? [{ 
             title: 'Coordenadores', 
             onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Coordenadores', roles: [Role.COORDINATOR] } }), 
-            icon: <UsersIcon />,
-            show: true 
-            },
-        ]
-        : []),
-    
+            icon: <UsersIcon />, show: true 
+          }] : []),
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR || user?.role === Role.SUPERVISOR
-        ? [
-            { 
+        ? [{ 
             title: 'Supervisores', 
             onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Supervisores', roles: [Role.SUPERVISOR] } }), 
-            icon: <UsersIcon />,
-            show: true 
-            },
-        ]
-        : []),
-    
-    ...(user?.role !== Role.ASSISTANT // Todos menos Auxiliar
-        ? [
-            { 
+            icon: <UsersIcon />, show: true 
+          }] : []),
+    ...(user?.role !== Role.ASSISTANT && user?.role !== Role.CLIENT
+        ? [{ 
             title: 'Técnicos', 
             onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Técnicos', roles: [Role.TECHNICIAN] } }), 
-            icon: <UsersIcon />,
-            show: true 
-            },
-        ]
-        : []),
-    
-    ...(user?.role !== Role.ASSISTANT // Todos menos Auxiliar
-        ? [
-            { 
+            icon: <UsersIcon />, show: true 
+          }] : []),
+    ...(user?.role !== Role.ASSISTANT && user?.role !== Role.CLIENT
+        ? [{ 
             title: 'Auxiliares', 
             onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Auxiliares', roles: [Role.ASSISTANT] } }), 
-            icon: <UsersIcon />,
-            show: true 
-            },
-        ]
-        : []),
+            icon: <UsersIcon />, show: true 
+          }] : []),
+    ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
+        ? [{ 
+            title: 'Clientes', 
+            onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Clientes', roles: [Role.CLIENT] } }), 
+            icon: <UsersIcon />, show: true 
+          }] : []),
 
     // ============ GERENCIAMENTO DE USINAS ============
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR || user?.role === Role.SUPERVISOR
-        ? [
-            {
+        ? [{
             title: 'Gerenciar Usinas',
             onClick: () => setModalConfig({ type: 'MANAGE_PLANTS' }),
             icon: (
@@ -176,30 +146,19 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </svg>
             ),
             show: true,
-            },
-        ]
-        : []),
+            }] : []),
     ];
 
-  // Conteúdo reutilizável da sidebar (mobile e desktop)
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
-      {/* Cabeçalho com logo e nome do sistema; gira levemente quando recolhida */}
       <div className="flex items-center justify-center p-4 border-b dark:border-gray-700">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          className={`h-8 w-8 text-blue-500 transition-transform duration-300 ${isCollapsed ? 'rotate-12' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
+        <svg xmlns="http://www.w3.org/2000/svg" className={`h-8 w-8 text-blue-500 transition-transform duration-300 ${isCollapsed ? 'rotate-12' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
         </svg>
         {!isCollapsed && <h1 className="ml-2 text-xl font-bold">LOOP.OS Manager</h1>}
       </div>
 
-      {/* Navegação Principal: renderiza somente itens permitidos */}
-      <nav className="flex-1 px-2 py-4 space-y-2">
+      <nav className="flex-1 px-2 py-4 space-y-2 overflow-y-auto">
         {navItems.filter(item => item.show).map(item => (
           <button
             key={item.title}
@@ -211,26 +170,20 @@ const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             {item.icon}
-            {!isCollapsed && <span className="ml-3">{item.title}</span>}
+            {!isCollapsed && <span className="ml-3 text-left">{item.title}</span>}
           </button>
         ))}
-
-        {/* Caso nada esteja visível por papel, mostre uma dica (opcional) */}
-        {navItems.every(i => !i.show) && (
-          <p className="text-xs text-gray-500 px-4 py-2">Sem permissões para navegação.</p>
-        )}
       </nav>
 
-      {/* Seção do Usuário e Logout */}
       <div className="px-2 py-4 border-t dark:border-gray-700">
         <div className="flex items-center px-4">
-          <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">
+          <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold shrink-0">
             {user?.name?.charAt(0) ?? '?'}
           </div>
           {!isCollapsed && (
-            <div className="ml-3">
-              <p className="font-semibold text-sm">{user?.name ?? '—'}</p>
-              <p className="text-xs text-gray-500">{roleLabel || '—'}</p>
+            <div className="ml-3 overflow-hidden">
+              <p className="font-semibold text-sm truncate">{user?.name ?? '—'}</p>
+              <p className="text-xs text-gray-500 truncate">{roleLabel || '—'}</p>
             </div>
           )}
         </div>
@@ -245,10 +198,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* Botão de recolher/expandir (desktop) */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="absolute top-1/2 -right-3 transform -translate-y-1/2 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-full p-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 hidden lg:block"
+        className="absolute top-1/2 -right-3 transform -translate-y-1/2 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-full p-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 hidden lg:block shadow-md"
         title={isCollapsed ? 'Expandir' : 'Recolher'}
       >
         <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform ${isCollapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -258,25 +210,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
-  // Render responsivo: drawer no mobile, fixa no desktop
   return (
     <>
-      {/* Overlay do drawer (mobile) */}
-      <div
-        className={`fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden transition-opacity ${isMobileOpen ? 'opacity-30' : 'opacity-0 pointer-events-none'}`}
-        onClick={() => setMobileOpen(false)}
-      />
-      {/* Sidebar mobile */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 bg-white dark:bg-gray-800 transform transition-transform lg:hidden ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
-      >
+      <div className={`fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden transition-opacity ${isMobileOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileOpen(false)} />
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-white dark:bg-gray-800 transform transition-transform lg:hidden ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarContent />
       </aside>
-
-      {/* Sidebar desktop */}
-      <aside
-        className={`relative hidden lg:flex flex-col flex-shrink-0 bg-white dark:bg-gray-800 border-r dark:border-gray-700 transition-all duration-300 ${isCollapsed ? 'w-20' : 'w-64'}`}
-      >
+      <aside className={`relative hidden lg:flex flex-col flex-shrink-0 bg-white dark:bg-gray-800 border-r dark:border-gray-700 transition-all duration-300 ${isCollapsed ? 'w-20' : 'w-64'}`}>
         <SidebarContent />
       </aside>
     </>

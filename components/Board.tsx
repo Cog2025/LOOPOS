@@ -1,120 +1,129 @@
 // File: components/Board.tsx
-// Este componente é o contêiner principal para o painel Kanban,
-// utilizando a biblioteca `react-beautiful-dnd` para a funcionalidade de arrastar e soltar.
-
-import React from 'react';
-// Importa os componentes e tipos necessários da biblioteca de drag-and-drop.
+import React, { useState, useMemo } from 'react';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
-import { OS, OSStatus } from '../types';
 import Column from './Column';
-// Importa constantes usadas para os títulos das colunas e a ordem dos status.
-import { STATUS_COLUMN_TITLES, OS_STATUSES } from '../constants';
 import { useData } from '../contexts/DataContext';
-import { useAuth } from '../contexts/AuthContext';
+import { OSStatus, OS } from '../types';
+import OSDetailModal from './modals/OSDetailModal';
+import OSForm from './modals/OSForm';
 
-// Define as propriedades que o componente Board espera receber do Dashboard.
 interface BoardProps {
-    osList: OS[]; // A lista de Ordens de Serviço a serem exibidas.
-    onUpdateOS: (os: OS) => void; // Função para atualizar uma OS (ex: mudar o status).
-    onCardClick: (os: OS) => void; // Função para abrir o modal de detalhes da OS.
-    onOpenDownloadFilter: () => void; // Função para abrir o modal de download.
+    onOpenDownloadFilter?: () => void;
+    // ✅ NOVO: Recebe a lista filtrada do pai (Dashboard)
+    osList: OS[];
 }
 
+const Board: React.FC<BoardProps> = ({ onOpenDownloadFilter, osList }) => {
+  const { updateOS } = useData();
+  
+  const [selectedOSId, setSelectedOSId] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
 
-const Board: React.FC<BoardProps> = ({ osList, onUpdateOS, onCardClick, onOpenDownloadFilter }) => {
-    const { filterOSForUser } = useData();
-    const { user } = useAuth();
-    // Lista efetivamente exibida de acordo com o papel do usuário
-    const visibleOS = user ? filterOSForUser(user) : osList;
+  const selectedOS = useMemo(() => 
+    osList.find(o => o.id === selectedOSId) || null, 
+  [osList, selectedOSId]);
 
-    /**
-     * Função chamada ao final de uma operação de arrastar e soltar.
-     * @param result O objeto contendo informações sobre a ação de arrastar (origem, destino, etc.).
-     */
-    const onDragEnd = (result: DropResult) => {
-        const { destination, source, draggableId } = result;
+  // Agora usa 'osList' (que vem filtrada) em vez de pegar tudo do contexto
+  const columnsData = useMemo(() => {
+      const today = new Date().toISOString().split('T')[0];
+      
+      const future = osList.filter(os => os.status === OSStatus.PENDING && os.startDate > today);
+      const pending = osList.filter(os => os.status === OSStatus.PENDING && os.startDate <= today);
+      const inProgress = osList.filter(os => os.status === OSStatus.IN_PROGRESS);
+      const inReview = osList.filter(os => os.status === OSStatus.IN_REVIEW);
+      const completed = osList.filter(os => os.status === OSStatus.COMPLETED);
 
-        // Se não houver destino (o item foi solto fora de uma coluna) ou se o item voltou para a mesma posição, não faz nada.
-        if (!destination || (destination.droppableId === source.droppableId && destination.index === source.index)) {
-            return;
+      return {
+          'FUTURE': { title: '📅 Futuras', items: future, color: 'bg-indigo-900', isFuture: true },
+          [OSStatus.PENDING]: { title: 'Pendente', items: pending, color: 'bg-yellow-100 dark:bg-yellow-900/30', isFuture: false },
+          [OSStatus.IN_PROGRESS]: { title: 'Em Execução', items: inProgress, color: 'bg-blue-100 dark:bg-blue-900/30', isFuture: false },
+          [OSStatus.IN_REVIEW]: { title: 'Em Revisão', items: inReview, color: 'bg-purple-100 dark:bg-purple-900/30', isFuture: false },
+          [OSStatus.COMPLETED]: { title: 'Concluído', items: completed, color: 'bg-green-100 dark:bg-green-900/30', isFuture: false },
+      };
+  }, [osList]);
+
+  const onDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+    const { source, destination, draggableId } = result;
+
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+    const os = osList.find(o => o.id === draggableId);
+    if (!os) return;
+
+    const destId = destination.droppableId;
+    let updates: Partial<OS> = {};
+
+    if (destId === 'FUTURE') {
+        updates.status = OSStatus.PENDING;
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        updates.startDate = tomorrow.toISOString().split('T')[0];
+    } else {
+        updates.status = destId as OSStatus;
+
+        if (source.droppableId === 'FUTURE') {
+            updates.startDate = new Date().toISOString().split('T')[0];
+        }
+        
+        if (destId === OSStatus.IN_PROGRESS) {
+            updates.isInReview = false; 
+            updates.endDate = undefined; 
+            if (!os.executionStart) updates.executionStart = new Date().toISOString();
+        }
+        
+        if (destId === OSStatus.IN_REVIEW) {
+            updates.isInReview = true;
         }
 
-        // Se soltar na coluna "FUTURAS", a gente ignora (para não mudar status para algo inválido)
-        if (destination.droppableId === 'FUTURE') return;
-
-        // Encontra a OS que foi movida.
-        const osToMove = visibleOS.find(os => os.id === draggableId);
-        if (osToMove) {
-            // Prepara atualização
-            const updates: Partial<OS> = { status: destination.droppableId as OSStatus };
-            
-            // Se veio de FUTURAS para PENDENTES, a data deveria atualizar para HOJE
-            if (source.droppableId === 'FUTURE' && destination.droppableId === OSStatus.PENDING) {
-                updates.startDate = new Date().toISOString();
-            }
-
-            // Chama a função de atualização do DataContext para persistir a mudança de status.
-            onUpdateOS({ ...osToMove, ...updates });
+        if (destId === OSStatus.COMPLETED) {
+            updates.endDate = new Date().toISOString();
+            updates.isInReview = false;
         }
-    };
+    }
 
-    // Helper para verificar datas futuras
-    const isFuture = (dateStr: string) => {
-        const date = new Date(dateStr);
-        const today = new Date();
-        today.setHours(23, 59, 59, 999); // Fim de hoje
-        return date > today;
-    };
+    updateOS({ ...os, ...updates });
+  };
 
-    // Separa as OSs Pendentes em "Atuais" e "Futuras"
-    const futureOS = visibleOS.filter(os => os.status === OSStatus.PENDING && isFuture(os.startDate));
-    
-    // Função auxiliar para filtrar OS da coluna (excluindo futuras se for Pendente)
-    const getColumnOS = (status: OSStatus) => {
-        if (status === OSStatus.PENDING) {
-            return visibleOS.filter(os => os.status === status && !isFuture(os.startDate));
-        }
-        return visibleOS.filter(os => os.status === status);
-    };
+  return (
+    <div className="h-full flex flex-col">
+      <DragDropContext onDragEnd={onDragEnd}>
+        <div className="flex-1 overflow-x-auto overflow-y-hidden">
+          <div className="flex h-full gap-4 p-4 min-w-[1600px]">
+            {Object.entries(columnsData).map(([columnId, col]) => (
+              <Column 
+                key={columnId} 
+                status={columnId as any} 
+                title={col.title} 
+                items={col.items} 
+                color={col.color}
+                isFutureColumn={col.isFuture}
+                onCardClick={(os) => setSelectedOSId(os.id)}
+                onOpenDownloadFilter={onOpenDownloadFilter}
+              />
+            ))}
+          </div>
+        </div>
+      </DragDropContext>
 
-    // O JSX do painel.
-    return (
-        // `DragDropContext` é o componente que envolve toda a área onde o drag-and-drop é permitido.
-        <DragDropContext onDragEnd={onDragEnd}>
-            <div className="flex h-full p-4 space-x-4 overflow-x-auto">
-                
-                {/* 1. Coluna Especial: AGENDADAS (Futuras) */}
-                {/* Usamos um ID 'FUTURE' para o Droppable para diferenciar */}
-                <Column
-                    key="FUTURE"
-                    status={OSStatus.PENDING} // Usa status base pendente
-                    title={`📅 Agendadas (> Hoje)`}
-                    osList={futureOS}
-                    onCardClick={onCardClick}
-                    onOpenDownloadFilter={onOpenDownloadFilter}
-                    isFutureColumn={true} // Prop nova para estilizar diferente
-                />
+      {selectedOS && !isEditing && (
+        <OSDetailModal 
+          isOpen={true} 
+          os={selectedOS} 
+          onClose={() => setSelectedOSId(null)} 
+          onEdit={() => setIsEditing(true)}
+        />
+      )}
 
-                {/* Mapeia a lista de status para criar uma coluna para cada um. */}
-                {OS_STATUSES.map(status => {
-                    // Filtra a lista de OS para obter apenas as que pertencem a esta coluna (status).
-                    const osInColumn = getColumnOS(status);
-                    const title = status === OSStatus.PENDING ? "Pendentes (A Vencer)" : STATUS_COLUMN_TITLES[status];
-
-                    return (
-                        <Column
-                            key={status}
-                            status={status}
-                            title={title}
-                            osList={osInColumn}
-                            onCardClick={onCardClick}
-                            onOpenDownloadFilter={onOpenDownloadFilter}
-                        />
-                    );
-                })}
-            </div>
-        </DragDropContext>
-    );
+      {isEditing && selectedOS && (
+        <OSForm 
+          isOpen={true} 
+          initialData={selectedOS} 
+          onClose={() => setIsEditing(false)}
+        />
+      )}
+    </div>
+  );
 };
 
 export default Board;

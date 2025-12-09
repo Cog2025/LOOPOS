@@ -1,106 +1,156 @@
-# /attachments/app/core/schemas.py
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+# attachments/app/core/schemas.py
+from pydantic import BaseModel
+from typing import List, Optional, Union, Any
 
-# -------------------- USERS --------------------
-RoleLiteral = Literal["Admin","Coordenador","Supervisor","Operador","Técnico","Auxiliar"]
+# --- Subusinas (Versão Tolerante - Aceita ID int ou string) ---
+class SubPlant(BaseModel):
+    id: Any # ✅ MUDANÇA: Aceita qualquer coisa (int do legado ou str novo)
+    name: Optional[str] = "Subusina Padrão"
+    inverterCount: int = 0
+    trackersPerInverter: int = 0
+    stringsPerInverter: int = 0
 
+# --- Payload de Atribuições ---
+class AssignmentsPayload(BaseModel):
+    coordinatorId: Optional[str] = ""
+    supervisorIds: List[str] = []
+    technicianIds: List[str] = []
+    assistantIds: List[str] = []
+
+# --- Plantas ---
+class PlantBase(BaseModel):
+    name: str
+    client: str
+    stringCount: int = 0
+    trackerCount: int = 0
+    assets: List[str] = []
+    subPlants: List[SubPlant] = [] 
+
+class PlantCreate(PlantBase, AssignmentsPayload):
+    pass
+
+class PlantUpdate(PlantBase, AssignmentsPayload):
+    pass
+
+class PlantOut(PlantBase, AssignmentsPayload):
+    id: str
+    class Config:
+        from_attributes = True
+
+# --- Usuários ---
 class UserBase(BaseModel):
     name: str
-    username: str = Field(
-        min_length=3, max_length=32,
-        pattern=r"^[a-z0-9._-]+$",
-        description="login sem espaços, ex: Fabio"
-    )
+    username: str
+    role: str
     email: Optional[str] = None
     phone: Optional[str] = None
-    role: RoleLiteral
-    can_login: bool = True
     supervisorId: Optional[str] = None
-    class Config:
-        from_attributes = True  # Permite ler do objeto SQL
+    can_login: bool = True
+    plantIds: List[str] = []
 
 class UserCreate(UserBase):
-    password: Optional[str] = None
-    class Config:
-        from_attributes = True  # Permite ler do objeto SQL
+    password: str
 
-class UserUpdate(BaseModel):
-    name: Optional[str] = None
-    username: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    role: Optional[RoleLiteral] = None
-    can_login: Optional[bool] = None
-    supervisorId: Optional[str] = None
+class UserUpdate(UserBase):
     password: Optional[str] = None
-    plantIds: Optional[List[str]] = None
-    class Config:
-        from_attributes = True  # Permite ler do objeto SQL
 
 class UserOut(UserBase):
     id: str
-    # Senha removida por segurança (Use /api/login para autenticar)
-    # password: Optional[str] = None 
-    plantIds: List[str] = []
     class Config:
-        from_attributes = True  # Permite ler do objeto SQL
+        from_attributes = True
 
+# --- OS e Outros ---
+class OSLog(BaseModel):
+    id: str
+    timestamp: str
+    authorId: str
+    comment: str
 
-# -------------------- PLANTS --------------------
-class SubPlant(BaseModel):
+class ImageAttachment(BaseModel):
+    id: str
+    url: str
+    caption: Optional[str] = None
+    fileName: Optional[str] = None
+    uploadedBy: Optional[str] = None
+    uploadedAt: Optional[str] = None
+
+class SubtaskItem(BaseModel):
     id: int
-    inverterCount: int = 0
-    class Config:
-        from_attributes = True  # Permite ler do objeto SQL
+    text: str
+    done: bool
+    comment: Optional[str] = None
 
-class PlantBase(BaseModel):
-    client: str
-    name: str
-    stringCount: int = 0
-    trackerCount: int = 0
-    subPlants: List[SubPlant] = Field(default_factory=list)
-    assets: List[str] = Field(default_factory=list)
-    class Config:
-        from_attributes = True  # Permite ler do objeto SQL
+class OSBase(BaseModel):
+    title: str
+    description: str
+    status: str
+    priority: str
+    plantId: str
+    subPlantId: Optional[str] = None
+    inverterId: Optional[str] = None
+    technicianId: Optional[str] = None
+    supervisorId: Optional[str] = None
+    startDate: str
+    endDate: Optional[str] = None
+    activity: str
+    assets: List[str] = []
+    logs: List[OSLog] = []
+    imageAttachments: List[ImageAttachment] = []
+    subtasksStatus: List[SubtaskItem] = []
+    
+    classification1: Optional[str] = None
+    classification2: Optional[str] = None
+    estimatedDuration: Optional[int] = 0
+    plannedDowntime: Optional[int] = 0
+    
+    executionStart: Optional[str] = None
+    executionTimeSeconds: Optional[int] = 0
+    isInReview: bool = False
 
-# MIXIN DE ASSIGNMENTS PARA REUTILIZAR
-class AssignmentsMixin(BaseModel):
-    coordinatorId: Optional[str] = ""
-    supervisorIds: List[str] = Field(default_factory=list)
-    technicianIds: List[str] = Field(default_factory=list)
-    assistantIds: List[str] = Field(default_factory=list)
-    class Config:
-        from_attributes = True  # Permite ler do objeto SQL
+class OSCreate(OSBase):
+    id: str
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
 
-# -------------------- NOTIFICATIONS --------------------
-class NotificationBase(BaseModel):
+class OSUpdate(OSBase):
+    updatedAt: Optional[str] = None
+
+# ✅ MUDANÇA CRÍTICA: 'Any' desabilita a validação estrita de tipo
+class OSOut(OSBase):
+    id: str
+    createdAt: Any = None 
+    updatedAt: Any = None
+    
+    class Config:
+        from_attributes = True
+
+# --- Notificações ---
+class NotificationCreate(BaseModel):
     userId: str
     message: str
     read: bool = False
     timestamp: str
 
-class NotificationCreate(NotificationBase):
-    pass
-
-class NotificationOut(NotificationBase):
+class NotificationOut(NotificationCreate):
     id: str
     class Config:
         from_attributes = True
 
-# AGORA SIM: Create e Update aceitam assignments!
-class PlantCreate(PlantBase, AssignmentsMixin):
-    pass
+# --- Manutenção ---
+class TaskTemplateCreate(BaseModel):
+    plan_code: Optional[str] = None
+    asset_category: str
+    title: str
+    task_type: str
+    criticality: str
+    classification1: Optional[str] = None
+    classification2: Optional[str] = None
+    estimated_duration_minutes: int = 0
+    frequency: str = "Dias"
+    frequency_days: int
+    subtasks: List[str] = []
 
-class PlantUpdate(PlantBase, AssignmentsMixin):
-    pass
-
-class PlantOut(PlantBase, AssignmentsMixin):
+class TaskTemplateOut(TaskTemplateCreate):
     id: str
-
-
-# -------------------- ASSIGNMENTS PAYLOAD (Mantido para compatibilidade) --------------------
-class AssignmentsPayload(AssignmentsMixin):
-    pass
-
-
+    class Config:
+        from_attributes = True
