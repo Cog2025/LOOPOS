@@ -3,8 +3,8 @@ print("🔄 [DEBUG] Iniciando imports do main.py...")
 from app.core.database import engine, get_db
 from app.core import models
 from app.core.schemas import NotificationCreate, NotificationOut
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status, Header
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,19 +12,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from typing import List
 from pathlib import Path
-from datetime import datetime
 import os
-import uuid
 
 # Routers
 from app.routes.users import router as users_router
 from app.routes.plants import router as plants_router
 from app.routes.maintenance import router as maintenance_router
+# 🔥 CORREÇÃO DO IMPORT: Como você roda de dentro da pasta attachments, o import é direto
 from os_api import router as os_router 
 
 print("🔄 [DEBUG] Imports concluídos. Tentando criar tabelas...")
 
-# Cria tabelas
 try:
     models.Base.metadata.create_all(bind=engine)
     print("✅ [DEBUG] Tabelas criadas/verificadas com sucesso!")
@@ -41,21 +39,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==============================================================================
-# 1. ROTAS DA API (DEVEM VIR PRIMEIRO!)
-# ==============================================================================
+# 1. ROTAS DA API
 app.include_router(os_router)
 app.include_router(users_router)
 app.include_router(plants_router)
-app.include_router(maintenance_router) # ✅ Garante que manutenção está aqui
+app.include_router(maintenance_router)
 
-# Configuração de diretórios de uploads
-BASE_ATTACHMENTS = Path(os.getenv("NEXTCLOUD_ATTACHMENTS_DIR", r"C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\attachments"))
-UPLOAD_ROOT = BASE_ATTACHMENTS / "images"
-UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-app.mount("/files", StaticFiles(directory=UPLOAD_ROOT), name="files")
+# 2. SERVIR IMAGENS (PARA O TUNNEL E MINIATURAS FUNCIONAREM)
+# Caminho absoluto para .../LOOPOS/attachments
+# (Sobe 2 níveis a partir de app/main.py)
+CURRENT_DIR = Path(__file__).resolve().parent.parent 
+ATTACHMENTS_DIR = CURRENT_DIR # .../LOOPOS/attachments
 
-# --- Rotas de Autenticação e Notificações (Mantidas) ---
+if ATTACHMENTS_DIR.exists():
+    # Monta a rota /attachments para que links como /attachments/images/... funcionem
+    app.mount("/attachments", StaticFiles(directory=ATTACHMENTS_DIR), name="attachments")
+    print(f"📂 [DEBUG] Servindo anexos de: {ATTACHMENTS_DIR}")
+else:
+    print(f"⚠️ [AVISO] Pasta de anexos não encontrada em: {ATTACHMENTS_DIR}")
+
+# Rotas Auth
 @app.post("/api/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
@@ -70,23 +73,25 @@ def list_notifications(x_user_id: str = Header(None), db: Session = Depends(get_
     if not x_user_id: return []
     return db.query(models.Notification).filter(models.Notification.userId == x_user_id).all()
 
-# ==============================================================================
-# 2. SERVIR O FRONTEND (DEVE VIR POR ÚLTIMO!)
-# ==============================================================================
-DIST_DIR = Path(__file__).resolve().parents[2] / "dist"
+# 3. SERVIR O SITE REACT (MODO PRODUÇÃO)
+# Caminho absoluto para .../LOOPOS/dist
+# (Sobe 3 níveis a partir de app/main.py para sair de attachments e ir para dist)
+DIST_DIR = CURRENT_DIR.parent / "dist"
 
 if DIST_DIR.exists():
-    print(f"✅ [DEBUG] Pasta dist encontrada em: {DIST_DIR}")
+    print(f"✅ [DEBUG] Servindo Frontend de: {DIST_DIR}")
     app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
     
-    # Rota "Pega-Tudo" para o React (SPA)
-    # ATENÇÃO: Só captura o que NÃO começou com /api ou /files
+    # Rota "Pega-Tudo" para o React
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
-        # Se tentar acessar arquivo que não existe, manda o index.html
+        # Se for requisição de API ou Attachments que não casou antes, deixa passar (404 da API)
+        if full_path.startswith("api") or full_path.startswith("attachments"):
+            raise HTTPException(status_code=404, detail="Not Found")
+            
         file_path = DIST_DIR / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         return FileResponse(DIST_DIR / "index.html")
 else:
-    print(f"⚠️ [AVISO] Pasta 'dist' não encontrada.")
+    print(f"⚠️ [ERRO] Pasta 'dist' não encontrada em {DIST_DIR}. Rode 'npm run build' na raiz.")

@@ -3,10 +3,11 @@
 // Inclui correções críticas para persistência de imagens e execução de OS.
 // Contexto global corrigido para evitar CRASH por limite de LocalStorage (QuotaExceeded).
 
+
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { OS, User, Plant, Notification, OSLog, ImageAttachment, Role, TaskTemplate, PlantMaintenancePlan } from '../types';
 
-const API_BASE = '';
+const API_BASE = ''; // Vazio para usar o proxy do Vite/Cloudflare
 
 interface AssignmentsDTO {
   coordinatorId: string | null;
@@ -62,6 +63,7 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
+// 🔥 HOOK BLINDADO CONTRA QUOTA EXCEEDED 🔥
 const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
@@ -78,7 +80,7 @@ const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<R
       try {
         window.localStorage.setItem(key, JSON.stringify(next));
       } catch (error) {
-        console.warn(`[LocalStorage] Falha ao salvar '${key}': Limite excedido.`);
+        console.warn(`[LocalStorage] Falha ao salvar '${key}': Limite excedido. Dados mantidos em memória.`);
       }
       return next;
     });
@@ -102,8 +104,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [users, setUsers] = useLocalStorage<User[]>('users', []);
   const [plants, setPlants] = useLocalStorage<Plant[]>('plants', []);
   const [osList, setOsList] = useLocalStorage<OS[]>('osList', []);
+  
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
   const [maintenancePlans, setMaintenancePlans] = useState<Record<string, PlantMaintenancePlan[]>>({});
+
   const headersRef = React.useRef<Record<string, string>>({});
   
   const setAuthHeaders = React.useCallback((h: Record<string, string>) => {
@@ -190,15 +194,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await fetchPlantPlan(plantId);
   };
   const deletePlantTask = async (taskId: string) => { await api(`/api/maintenance/plans/${taskId}`, { method: 'DELETE' }); };
+  
   const addTemplate = async (data: any) => { await api('/api/maintenance/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const updateTemplate = async (id: string, data: any) => { await api(`/api/maintenance/templates/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const deleteTemplate = async (id: string) => { await api(`/api/maintenance/templates/${id}`, { method: 'DELETE' }); await fetchTaskTemplates(); };
 
+  // ✅ FILTRO DE PERMISSÕES (RBAC) BLINDADO
   const filterOSForUser = (u: User): OS[] => {
     if (u.role === Role.ADMIN || u.role === Role.OPERATOR) return osList;
     if (u.role === Role.TECHNICIAN) return osList.filter(o => o.technicianId === u.id);
-    if (u.role === Role.CLIENT) return osList.filter(o => plants.find(p => p.id === o.plantId)?.client === u.name);
-    return osList;
+    
+    // Se for Cliente, Coord ou Sup, verifica IDs vinculados E correspondência de nome
+    if (u.role === Role.CLIENT || u.role === Role.COORDINATOR || u.role === Role.SUPERVISOR) {
+        const normalizedUserName = u.name.trim().toLowerCase();
+        
+        return osList.filter(o => {
+            const plant = plants.find(p => p.id === o.plantId);
+            if (!plant) return false;
+
+            // 1. Verifica vínculo direto por ID (Checkbox)
+            const idMatch = u.plantIds && u.plantIds.includes(plant.id);
+            
+            // 2. Verifica vínculo por Nome do Cliente (String)
+            // Útil para Clientes que não foram editados manualmente ainda
+            const nameMatch = u.role === Role.CLIENT && plant.client && plant.client.trim().toLowerCase() === normalizedUserName;
+
+            return idMatch || nameMatch;
+        });
+    }
+
+    return [];
   };
 
   const addUser = async (u: Omit<User, 'id'>) => {
@@ -216,6 +241,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return saved;
   };
   const deleteUser = async (id: string) => { await api(`/api/users/${id}`, { method: 'DELETE' }); setUsers(prev => prev.filter(x => x.id !== id)); };
+  
   const addPlant = async (plant: Omit<Plant, 'id'>, assignments?: AssignmentsDTO) => {
       const payload = { ...plant, ...assignments };
       const res = await api('/api/plants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -267,12 +293,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const patchOS = async (osId: string, updates: Partial<OS>) => {
-      // Atualização otimista
       setOsList(prev => prev.map(os => {
           if (os.id === osId) { return { ...os, ...updates, updatedAt: new Date().toISOString() }; }
           return os;
       }));
-      // Sincronização
       try {
           const currentOS = osList.find(o => o.id === osId);
           if (currentOS) {
@@ -287,20 +311,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setOsList(prev => prev.map(os => (os.id === osId ? { ...os, logs: [newLog, ...os.logs] } : os)));
   };
 
-  // ✅ CORREÇÃO DEFINITIVA: Uploads Atômicos
+  // ✅ ADD ATTACHMENT: SEGURO (Sem Race Condition)
   const addOSAttachment = async (osId: string, att: Omit<ImageAttachment, 'id'|'uploadedAt'>) => {
     const newAtt = { ...att, id: `img-${Date.now()}`, uploadedAt: new Date().toISOString() };
     
-    // NÃO fazemos atualização otimista manual aqui para evitar sobrescrita em uploads paralelos.
-    // Confiamos na resposta do servidor que retorna o estado atualizado.
+    // NOTA: Não atualizamos o estado local manualmente aqui para evitar conflitos.
+    // Confiamos na resposta do servidor que retorna o objeto completo atualizado.
 
     try {
-        // 1. Busca estado MAIS ATUAL da OS diretamente da lista (não usar cache velho)
-        const freshList = await api('/api/os').then(r => r.json()); // Opcional: buscar só 1 OS seria melhor
+        // 1. Busca dados frescos
+        const freshList = await api('/api/os').then(r => r.json());
         const currentOS = freshList.find((o: OS) => o.id === osId);
         
         if (currentOS) {
-            // 2. Adiciona o novo anexo à lista existente vinda do servidor
+            // 2. Adiciona o novo anexo à lista existente no servidor
             const updatedAttachments = [newAtt, ...(currentOS.imageAttachments || [])];
             
             const payload = { 
@@ -309,7 +333,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 updatedAt: new Date().toISOString() 
             };
             
-            // 3. Envia e aguarda confirmação
+            // 3. Salva
             const res = await api(`/api/os/${osId}`, { 
                 method: 'PUT', 
                 headers: { 'Content-Type': 'application/json' }, 
@@ -319,7 +343,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if(res.ok) {
                 const savedOS = await res.json();
                 console.log("✅ Imagem salva e sincronizada:", savedOS.id);
-                // 4. Atualiza o estado global com a resposta oficial do servidor
+                // 4. Atualiza estado global com a fonte da verdade
                 setOsList(prev => prev.map(os => (os.id === osId ? savedOS : os)));
             } else {
                 console.error("❌ Erro servidor ao salvar imagem.");

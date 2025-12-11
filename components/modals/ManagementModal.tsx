@@ -12,7 +12,7 @@ import { User, Plant, Role } from '../../types';
 import UserForm from './UserForm';
 import PlantForm from './PlantForm';
 import Portal from '../Portal';
-import PlantList from '../PlantList'; // Lista hierárquica: Cliente → Usinas (com botões)
+import PlantList from '../PlantList'; 
 
 // ============ TIPO EXPORTADO ============
 export type ManagementModalConfig = {
@@ -36,17 +36,20 @@ interface ManagementModalProps {
   setModalConfig: (config: ManagementModalConfig | null) => void;
 }
 
-const ROLE_SINGULAR: Record<Role, string> = {
+// ✅ CORREÇÃO: Removida duplicidade e garantido mapeamento único
+const ROLE_SINGULAR: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
   [Role.COORDINATOR]: 'Coordenador',
   [Role.SUPERVISOR]: 'Supervisor',
   [Role.OPERATOR]: 'Operador',
   [Role.TECHNICIAN]: 'Técnico',
   [Role.ASSISTANT]: 'Auxiliar',
+  [Role.CLIENT]: 'Cliente', // <--- Adicionado para evitar undefined
 };
 
 const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, config, setModalConfig }) => {
-  const { users, plants, deleteUser } = useData();
+  // ✅ CORREÇÃO: Usando 'addUser' (nome correto no Contexto) em vez de 'createUser'
+  const { users, plants, deleteUser, addUser, updateUser } = useData();
   const { user: currentUser } = useAuth();
 
   // --- ATOR (usuário logado) ---
@@ -73,6 +76,25 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
     }
   };
 
+  // ✅ HANDLER PARA SALVAR USUÁRIO (Passado para o UserForm)
+  const handleSaveUser = async (userData: Partial<User>) => {
+      try {
+          if (userData.id) {
+              // ✅ CORREÇÃO: updateUser aceita apenas 1 argumento (o objeto User completo)
+              // O TypeScript reclamava de "Expected 1 arguments, but got 2"
+              await updateUser(userData as User);
+          } else {
+              // ✅ CORREÇÃO: addUser aceita o objeto sem ID
+              await addUser(userData as Omit<User, 'id'>);
+          }
+          // Volta para o modal anterior (lista)
+          setModalConfig(config.data?.parentConfig);
+      } catch (error) {
+          console.error("Erro ao salvar usuário:", error);
+          alert("Erro ao salvar usuário.");
+      }
+  };
+
   // --- CONTEXTO RBAC ---
   // Contém informações do usuário e plantas para decisões de acesso
   const ctx = { me: actor, plants };
@@ -91,12 +113,12 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
 
   const getSingular = () => {
     const r = config.data?.roles?.[0];
-    return r ? ROLE_SINGULAR[r] : 'Usuário';
+    return r ? (ROLE_SINGULAR[r] || 'Usuário') : 'Usuário';
   };
 
   const title =
     config.type === 'USER_FORM'
-      ? (config.data?.user ? `Editar Usuário: ${config.data.user.name}` : 'Novo Usuário')
+      ? (config.data?.user ? `Editar Usuário: ${config.data.user.name}` : `Novo ${getSingular()}`)
       : config.type === 'PLANT_FORM'
         ? (config.data?.plant ? `Editar Usina: ${config.data.plant.name}` : 'Nova Usina')
         : isManagingUsers
@@ -115,28 +137,9 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
         const canView = canViewUser(ctx, u, plants);
         const matchesRole = !config.data?.roles || config.data.roles.length === 0 || config.data.roles.includes(u.role as Role);
         
-        if (u.name === 'Marcelo' || u.role === Role.TECHNICIAN) {
-          const plant = plants[0];
-          console.log(`📋 Filtrando ${u.name}:`, {
-            role: u.role,
-            plantIds: u.plantIds,
-            plant: plant,  // ✅ EXPANDA ISTO!
-            actorId: actor.id,
-            actorRole: actor.role,
-            actorPlantIds: actor.plantIds,
-            plantsCount: plants.length,  // ✅ ADICIONE
-            plants: plants.map(p => ({ id: p.id, name: p.name })),  // ✅ ADICIONE
-            canView,
-            matchesRole,
-            resultado: canView && matchesRole
-          });
-        }
-        
         return canView && matchesRole;
       })
     : [];
-
-
 
   // helper para habilitar "Novo Usuário" com base no papel alvo
   const canCreateUserRole = (role?: Role) =>
@@ -182,7 +185,7 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
             className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm"
             title="Deletar usuário"
           >
-            🗑️ Deletar
+            🗑️
           </button>
         )}
       </div>
@@ -234,6 +237,7 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
               onClose={() => setModalConfig(config.data?.parentConfig)}
               initialData={config.data?.user}
               role={config.data?.role}
+              onSave={handleSaveUser} // ✅ Passa a função de salvar para evitar erro no UserForm
             />
           )}
           {config.type === 'PLANT_FORM' && (

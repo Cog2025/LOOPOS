@@ -95,7 +95,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     return list;
   }, [osList, user, filterOSForUser, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants]);
 
-  // --- DOWNLOAD PDF CORRIGIDO ---
+  // --- DOWNLOAD PDF CORRIGIDO (Separando Ativo e Tarefa) ---
   const handleDownloadReport = async (type: 'summary' | 'complete') => {
     const reportData = visibleOS.filter(os => {
       const osDate = new Date(os.startDate);
@@ -116,11 +116,10 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
         if(btn) { btn.innerText = "Gerando..."; btn.disabled = true; }
 
         try {
-            // ✅ CORREÇÃO: Passando o 3º argumento (helpers)
             await generateOSReport(
                 reportData, 
                 "Relatório Completo de Manutenção",
-                { getPlantName, getUserName } // <--- AQUI ESTAVA FALTANDO
+                { getPlantName, getUserName }
             );
         } catch (e) {
             console.error(e);
@@ -129,21 +128,55 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
             if(btn) { btn.innerText = originalText; btn.disabled = false; }
         }
     } else {
-        // Relatório Resumido (Mantido Tabela Simples)
+        // --- RELATÓRIO RESUMIDO (CORRIGIDO) ---
         const doc = new jsPDF();
-        doc.text("Relatório Resumido", 14, 15);
-        autoTable(doc, {
-            startY: 25,
-            head: [['Data', 'OS', 'Usina', 'Ativo/Tarefa', 'Técnico', 'Status']],
-            body: reportData.map(os => [
+        
+        doc.setFontSize(16);
+        doc.text("Relatório Resumido de Manutenção", 14, 15);
+        
+        doc.setFontSize(10);
+        const periodo = `Período: ${format(parseISO(reportStartDate), 'dd/MM/yyyy')} a ${format(parseISO(reportEndDate), 'dd/MM/yyyy')}`;
+        doc.text(periodo, 14, 22);
+        doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, 27);
+
+        // ✅ 1. Definindo Colunas Separadas
+        const head = [['Data', 'OS ID', 'Usina', 'Ativo', 'Tarefa', 'Técnico', 'Status']];
+        
+        // ✅ 2. Mapeando os dados separadamente
+        const body = reportData.map(os => {
+            // Lógica robusta para encontrar o nome do ativo
+            const assetName = (os as any).assetName || (os.assets && os.assets.length > 0 ? os.assets.join(', ') : 'Geral');
+
+            return [
                 format(new Date(os.startDate), 'dd/MM/yyyy'),
                 os.id,
                 getPlantName(os.plantId),
-                `${(os as any).assetName || '-'} / ${os.activity}`,
+                assetName,    // Coluna Ativo Exclusiva
+                os.activity,  // Coluna Tarefa Exclusiva
                 getUserName(os.technicianId),
                 os.status
-            ])
+            ];
         });
+
+        autoTable(doc, {
+            startY: 35,
+            head: head,
+            body: body,
+            theme: 'striped',
+            headStyles: { fillColor: [41, 128, 185] }, // Azul
+            styles: { fontSize: 8 },
+            // Ajuste de largura das colunas para caber tudo
+            columnStyles: {
+                0: { cellWidth: 20 }, // Data
+                1: { cellWidth: 18 }, // ID
+                2: { cellWidth: 25 }, // Usina
+                3: { cellWidth: 30 }, // Ativo (Mais espaço)
+                4: { cellWidth: 'auto' }, // Tarefa (Ocupa o resto)
+                5: { cellWidth: 25 }, // Técnico
+                6: { cellWidth: 20 }  // Status
+            }
+        });
+        
         doc.save(`Resumo_${reportStartDate}.pdf`);
     }
   };

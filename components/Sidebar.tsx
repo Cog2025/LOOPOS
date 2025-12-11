@@ -45,6 +45,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
   const roleLabel = roleLabelMap[user?.role ?? ''] ?? '—';
 
+  // ✅ CORREÇÃO: Role.CLIENT adicionada para permitir visualização de planos
+  const canViewPlans = [
+      Role.ADMIN, Role.COORDINATOR, Role.SUPERVISOR, 
+      Role.OPERATOR, Role.TECHNICIAN, Role.CLIENT // <--- Adicionado
+  ].includes(user?.role as Role);
+
   const navItems = [
     {
       title: 'Kanban',
@@ -87,7 +93,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
         </svg>
       ),
-      show: user?.role !== Role.CLIENT, 
+      show: canViewPlans, 
       isActive: currentView === 'MAINTENANCE_PLANS',
     },
 
@@ -128,6 +134,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             onClick: () => setModalConfig({ type: 'MANAGE_USERS', data: { title: 'Auxiliares', roles: [Role.ASSISTANT] } }), 
             icon: <UsersIcon />, show: true 
           }] : []),
+    
+    // ✅ CORREÇÃO: Adicionada opção para gerenciar Clientes
     ...(user?.role === Role.ADMIN || user?.role === Role.OPERATOR
         ? [{ 
             title: 'Clientes', 

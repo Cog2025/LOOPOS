@@ -2,58 +2,71 @@
 // Este componente renderiza o cabeçalho superior da aplicação, visível no Dashboard.
 
 import React from 'react';
+import { Menu, Search, Plus, User as UserIcon } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
+import { Role } from '../types';
 
-// Define as propriedades que o componente Header espera receber.
 interface HeaderProps {
-    onMenuClick: () => void; // Função para abrir a sidebar no modo mobile.
-    onNewOSClick: () => void; // Função para abrir o modal de criação de OS.
-    searchTerm: string; // O valor atual do campo de busca.
-    setSearchTerm: (term: string) => void; // Função para atualizar o valor da busca.
+  onMenuClick: () => void;
+  onNewOSClick: () => void;
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ onMenuClick, onNewOSClick, searchTerm, setSearchTerm }) => {
-    return (
-        // O elemento <header> é fixo no topo da área de conteúdo.
-        <header className="flex-shrink-0 bg-white dark:bg-gray-800 shadow-md">
-            <div className="flex items-center justify-between p-2">
-                {/* Seção Esquerda: Menu Hamburger (mobile) e Barra de Busca */}
-                <div className="flex items-center">
-                    {/* Botão de menu "hamburger" que só é visível em telas pequenas (lg:hidden). */}
-                    <button onClick={onMenuClick} className="lg:hidden p-2 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring">
-                        <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path>
-                        </svg>
-                    </button>
-                    {/* Campo de busca com ícone de lupa. */}
-                    <div className="relative ml-4">
-                        <span className="absolute inset-y-0 left-0 flex items-center pl-3">
-                            <svg className="w-5 h-5 text-gray-400" viewBox="0 0 24 24" fill="none">
-                                <path d="M21 21L15 15M17 10C17 13.866 13.866 17 10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
-                            </svg>
-                        </span>
-                        <input 
-                            type="text"
-                            placeholder="Buscar OS..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full py-2 pl-10 pr-4 text-gray-700 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 border border-transparent rounded-lg focus:outline-none focus:bg-white dark:focus:bg-gray-600 focus:border-blue-500"
-                        />
-                    </div>
-                </div>
-                {/* Seção Direita: Botão "Nova OS" e Sino de Notificações */}
-                <div className="flex items-center space-x-4">
-                   <button
-                        onClick={onNewOSClick}
-                        className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
-                    >
-                        + Nova OS
-                    </button>
-                   <NotificationBell />
-                </div>
+  const { user, logout } = useAuth();
+
+  // ✅ CLIENTE NÃO PODE CRIAR OS
+  const canCreateOS = user?.role !== Role.CLIENT;
+
+  return (
+    <header className="bg-white dark:bg-gray-800 shadow-sm z-20">
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-3 flex-1">
+          <button onClick={onMenuClick} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg lg:hidden">
+            <Menu className="w-6 h-6 text-gray-600 dark:text-gray-300" />
+          </button>
+          
+          <div className="relative flex-1 max-w-md hidden md:block">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Buscar OS, usina, técnico..." 
+              className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-700 border-none rounded-lg focus:ring-2 focus:ring-blue-500 dark:text-white"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* ✅ SÓ MOSTRA O BOTÃO SE NÃO FOR CLIENTE */}
+          {canCreateOS && (
+            <button 
+              onClick={onNewOSClick}
+              className="hidden sm:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              <span className="hidden lg:inline">Nova OS</span>
+            </button>
+          )}
+
+          <NotificationBell />
+          
+          <div className="flex items-center gap-3 pl-3 border-l border-gray-200 dark:border-gray-700">
+            <div className="text-right hidden md:block">
+              <p className="text-sm font-bold text-gray-700 dark:text-gray-200">{user?.name}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">{user?.role}</p>
             </div>
-        </header>
-    );
+            <button onClick={logout} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg group" title="Sair">
+               <UserIcon className="w-8 h-8 p-1 bg-gray-200 dark:bg-gray-700 rounded-full text-gray-600 dark:text-gray-300 group-hover:text-red-500" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
 };
 
 export default Header;

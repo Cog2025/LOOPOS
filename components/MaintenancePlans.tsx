@@ -8,6 +8,7 @@ import StandardLibraryModal from './modals/StandardLibraryModal';
 import CustomInitializationModal from './modals/CustomInitializationModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { FileText, Download, ChevronDown, ChevronRight, AlertCircle, BookOpen, Settings } from 'lucide-react';
 
 const MaintenancePlans: React.FC = () => {
   const { plants, fetchPlantPlan, initializePlantPlan, maintenancePlans, updatePlantTask, deletePlantTask, createPlantTask, updatePlant, taskTemplates, fetchTaskTemplates } = useData();
@@ -16,7 +17,6 @@ const MaintenancePlans: React.FC = () => {
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedPlantId, setSelectedPlantId] = useState('');
   const [selectedAsset, setSelectedAsset] = useState('');
-  
   const [editingTask, setEditingTask] = useState<Partial<PlantMaintenancePlan> | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showCustomWizard, setShowCustomWizard] = useState(false);
@@ -27,12 +27,31 @@ const MaintenancePlans: React.FC = () => {
   const selectStyle = { color: 'black', backgroundColor: 'white', borderColor: '#cbd5e1' };
   const selectClasses = "w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all text-black bg-white";
 
-  const clients = useMemo(() => Array.from(new Set(plants.map(p => p.client))).sort(), [plants]);
+  // ✅ FILTRO DE USINAS PERMITIDAS (CORRIGIDO)
+  const allowedPlants = useMemo(() => {
+      if (!user) return [];
+      if (user.role === Role.ADMIN || user.role === Role.OPERATOR) return plants;
+      
+      const normalizedUserName = user.name.trim().toLowerCase();
+
+      return plants.filter(p => {
+          // 1. Vínculo por ID
+          const idMatch = user.plantIds && user.plantIds.includes(p.id);
+          // 2. Vínculo por Nome (apenas para CLIENTE)
+          const nameMatch = user.role === Role.CLIENT && p.client && p.client.trim().toLowerCase() === normalizedUserName;
+          
+          return idMatch || nameMatch;
+      });
+  }, [plants, user]);
+
+  // Lista de clientes baseada nas usinas permitidas
+  const clients = useMemo(() => Array.from(new Set(allowedPlants.map(p => p.client))).sort(), [allowedPlants]);
   
+  // Filtra usinas pelo cliente selecionado no dropdown
   const filteredPlants = useMemo(() => {
     if (!selectedClient) return [];
-    return plants.filter(p => p.client === selectedClient).sort((a, b) => a.name.localeCompare(b.name));
-  }, [selectedClient, plants]);
+    return allowedPlants.filter(p => p.client === selectedClient).sort((a, b) => a.name.localeCompare(b.name));
+  }, [selectedClient, allowedPlants]);
 
   const currentPlan = maintenancePlans[selectedPlantId] || [];
 
@@ -61,6 +80,7 @@ const MaintenancePlans: React.FC = () => {
       });
   }, [currentPlan, selectedAsset]);
 
+  // ✅ CORREÇÃO: Permissão para editar (Cliente não está incluído)
   const canEdit = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR || user?.role === Role.SUPERVISOR;
 
   const toggleExpand = (id: string) => {
@@ -114,19 +134,14 @@ const MaintenancePlans: React.FC = () => {
   const updateSubtask = (idx: number, val: string) => setEditingTask(prev => { const n = [...(prev?.subtasks || [])]; n[idx] = val; return {...prev, subtasks: n}; });
   const removeSubtask = (idx: number) => setEditingTask(prev => ({...prev, subtasks: (prev?.subtasks || []).filter((_, i) => i !== idx)}));
 
-  // ✅ NOVO: PDF DO PADRÃO LOOP
+  // PDF DO PADRÃO LOOP
   const handleDownloadStandardPDF = async () => {
-      // Garante que temos os templates atualizados
       await fetchTaskTemplates();
       const doc = new jsPDF();
-      
-      doc.setFontSize(18);
-      doc.text(`Plano Padrão LOOP`, 14, 20);
-      doc.setFontSize(10);
-      doc.text(`Biblioteca Completa de Manutenção`, 14, 26);
+      doc.setFontSize(18); doc.text(`Plano Padrão LOOP`, 14, 20);
+      doc.setFontSize(10); doc.text(`Biblioteca Completa de Manutenção`, 14, 26);
       
       const tableBody: any[] = [];
-      // Ordena por ativo
       const sortedTemplates = [...taskTemplates].sort((a,b) => a.asset_category.localeCompare(b.asset_category));
 
       sortedTemplates.forEach(task => {
@@ -144,14 +159,15 @@ const MaintenancePlans: React.FC = () => {
       doc.save(`Plano_Padrao_LOOP.pdf`);
   };
 
-  // ✅ ATUALIZADO: PDF DA USINA SELECIONADA
+  // ✅ PDF DA USINA (CLIENTE PODE BAIXAR)
   const handleDownloadPlantPDF = () => {
       const doc = new jsPDF();
       const plant = plants.find(p => p.id === selectedPlantId);
       doc.setFontSize(16); doc.text(`Plano de Manutenção: ${plant?.name || ''}`, 14, 20);
       doc.setFontSize(10); doc.text(`Cliente: ${selectedClient}`, 14, 26);
       const tableBody: any[] = [];
-      currentPlan.forEach(task => {
+      const sortedPlan = [...currentPlan].sort((a, b) => (a.asset_category || '').localeCompare(b.asset_category || ''));
+      sortedPlan.forEach(task => {
           tableBody.push([
               { content: task.asset_category, rowSpan: 2, styles: { valign: 'middle', fontStyle: 'bold' } }, 
               { content: task.title, styles: { fontStyle: 'bold' } },
@@ -162,7 +178,7 @@ const MaintenancePlans: React.FC = () => {
           tableBody.push([{ content: `${details}\n\nChecklist:\n${subtasksText}`, colSpan: 3, styles: { fontSize: 8, textColor: [80, 80, 80] } }]);
       });
       autoTable(doc, { startY: 35, head: [['Ativo', 'Tarefa / Checklist', 'Frequência', 'Criticidade']], body: tableBody, theme: 'grid', styles: { fontSize: 9, cellPadding: 2 }});
-      doc.save(`Plano_${plant?.name}.pdf`);
+      doc.save(`Plano_${plant?.name.replace(/\s/g, '_')}.pdf`);
   };
 
   const renderTasks = () => {
@@ -225,7 +241,7 @@ const MaintenancePlans: React.FC = () => {
   return (
     <div className="flex h-full bg-gray-50 dark:bg-gray-900 overflow-hidden">
       <div className="w-80 min-w-[320px] border-r dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col p-5 shadow-lg z-10">
-        <h2 className="text-xl font-bold mb-4 dark:text-white flex items-center gap-2"><span className="text-blue-600">📋</span> Planos</h2>
+        <h2 className="text-xl font-bold mb-4 dark:text-white flex items-center gap-2"><BookOpen className="w-6 h-6 text-blue-600" /> Planos</h2>
         <div className="mb-4">
             <label className="text-xs font-bold text-gray-500 uppercase">Cliente</label>
             <select style={selectStyle} className={selectClasses} value={selectedClient} onChange={e => {setSelectedClient(e.target.value); setSelectedPlantId('');}}>
@@ -245,7 +261,7 @@ const MaintenancePlans: React.FC = () => {
                 <div className="space-y-1">
                     <div className="flex justify-between items-center px-2 py-1">
                         <span className="text-xs font-bold text-gray-400 uppercase">Ativos ({availableAssets.length})</span>
-                        <button onClick={handleAddAsset} className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded hover:bg-green-200 transition" title="Adicionar Novo Ativo">+ Novo</button>
+                        {canEdit && <button onClick={handleAddAsset} className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded hover:bg-green-200 transition" title="Adicionar Novo Ativo">+ Novo</button>}
                     </div>
                     {availableAssets.map(a => (
                         <div key={a} onClick={() => setSelectedAsset(a)} className={`p-2 rounded cursor-pointer text-sm transition-colors ${selectedAsset === a ? 'bg-blue-100 text-blue-800 font-bold border-l-4 border-blue-500' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>{a}</div>
@@ -257,7 +273,6 @@ const MaintenancePlans: React.FC = () => {
       </div>
 
       <div className="flex-1 flex flex-col p-6 overflow-hidden bg-gray-50 dark:bg-gray-900">
-         {/* ✅ CABEÇALHO GLOBAL ATUALIZADO */}
          <div className="flex justify-between items-center mb-6 pb-4 border-b dark:border-gray-700">
              <div>
                  <h3 className="text-2xl font-bold dark:text-white">{selectedAsset || "Visão Geral"}</h3>
@@ -265,26 +280,29 @@ const MaintenancePlans: React.FC = () => {
              </div>
              
              <div className="flex gap-4 items-center">
-                 {/* AÇÕES GLOBAIS (Visíveis Sempre) */}
                  <div className="flex gap-2 border-r pr-4 mr-2 border-gray-300 dark:border-gray-600">
                     <button onClick={() => setShowLibrary(true)} className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-bold shadow-sm transition">
-                        📖 Acessar Biblioteca Padrão
+                        📖 Biblioteca Padrão
                     </button>
-                    <button onClick={handleDownloadStandardPDF} className="flex items-center gap-1 px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded text-xs font-bold shadow-sm transition">
-                        📄 Baixar Padrão LOOP (PDF)
-                    </button>
+                    {canEdit && (
+                        <button onClick={handleDownloadStandardPDF} className="flex items-center gap-1 px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded text-xs font-bold shadow-sm transition">
+                            📄 Baixar Padrão
+                        </button>
+                    )}
                  </div>
 
-                 {/* AÇÕES DA USINA (Visíveis apenas com usina selecionada) */}
                  {selectedPlantId && (
                      <div className="flex gap-2 animate-fadeIn">
+                         {/* ✅ BOTÃO DOWNLOAD (Visível para Cliente também) */}
                          <button onClick={handleDownloadPlantPDF} className="flex items-center gap-1 px-4 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded text-xs font-bold shadow-md transition transform hover:scale-105">
-                             📄 Baixar Plano da Usina
+                             <Download className="w-4 h-4" /> Baixar Plano da Usina
                          </button>
-                         <div className="flex bg-gray-200 rounded p-1 gap-1">
-                            <button onClick={handleInitializeStandard} className="px-3 py-1 text-xs font-bold bg-white hover:bg-blue-50 text-blue-700 rounded shadow-sm">Resetar Padrão</button>
-                            <button onClick={handleOpenCustomWizard} className="px-3 py-1 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm">Criar Plano Customizado</button>
-                         </div>
+                         {canEdit && (
+                             <div className="flex bg-gray-200 rounded p-1 gap-1">
+                                <button onClick={handleInitializeStandard} className="px-3 py-1 text-xs font-bold bg-white hover:bg-blue-50 text-blue-700 rounded shadow-sm">Resetar</button>
+                                <button onClick={handleOpenCustomWizard} className="px-3 py-1 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm flex items-center gap-1"><Settings className="w-3 h-3" /> Custom</button>
+                             </div>
+                         )}
                      </div>
                  )}
              </div>

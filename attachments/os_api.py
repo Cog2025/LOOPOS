@@ -1,5 +1,5 @@
 # File: attachments/os_api.py
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, Header
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -48,27 +48,19 @@ class OSModel(BaseModel):
 
 router = APIRouter(prefix="/api/os", tags=["os"])
 
-# --- LÓGICA DE SALVAMENTO DE IMAGENS CORRIGIDA ---
+# Helper para pegar o diretório correto das imagens
+def get_images_dir(os_id: str):
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(CURRENT_DIR, "images", os_id)
+
+# --- LÓGICA DE SALVAMENTO ---
 def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     processed = []
+    target_dir = get_images_dir(os_id)
     
-    # 1. DETECTA ONDE O SERVIDOR ESTÁ RODANDO PARA EVITAR DUPLICAÇÃO DE CAMINHO
-    current_working_dir = os.getcwd()
-    
-    # Se o terminal já está dentro da pasta 'attachments'
-    if os.path.basename(current_working_dir) == "attachments":
-        BASE_DIR = os.path.abspath("images")
-    else:
-        # Se está na raiz do projeto (LOOPOS)
-        BASE_DIR = os.path.abspath("attachments/images")
-        
-    target_dir = os.path.join(BASE_DIR, os_id)
-    
-    # Cria a pasta da OS se não existir
     if not os.path.exists(target_dir):
         try:
             os.makedirs(target_dir, exist_ok=True)
-            print(f"📂 [DEBUG] Pasta criada: {target_dir}")
         except Exception as e:
             print(f"❌ [ERRO] Falha ao criar pasta {target_dir}: {e}")
 
@@ -78,24 +70,20 @@ def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[D
         # Se for imagem nova (Base64)
         if url and url.startswith("data:image"):
             try:
-                # Decodifica Base64
                 header, encoded = url.split(",", 1)
                 file_ext = header.split(";")[0].split("/")[1]
                 
-                # Trata nome do arquivo
                 original_name = att.get("fileName") or f"img_{len(processed)}.{file_ext}"
                 safe_name = "".join([c for c in original_name if c.isalnum() or c in (' ', '.', '_', '-')]).strip()
                 filename = safe_name or f"image_{len(processed)}.{file_ext}"
                 
                 file_path = os.path.join(target_dir, filename)
                 
-                # Salva no disco
                 with open(file_path, "wb") as f:
                     f.write(base64.b64decode(encoded))
                 
-                # Atualiza URL para o caminho virtual (acessível pelo navegador)
                 att["url"] = f"/attachments/images/{os_id}/{filename}"
-                print(f"✅ [SUCESSO] Salvo em: {file_path}")
+                print(f"✅ [UPLOAD] Salvo em: {file_path}")
                 
             except Exception as e:
                 print(f"❌ [ERRO] Falha ao salvar arquivo: {e}")
@@ -103,11 +91,64 @@ def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[D
         processed.append(att)
     return processed
 
+# ✅ NOVA FUNÇÃO: DELETAR ARQUIVOS REMOVIDOS
+def cleanup_deleted_files(os_id: str, old_attachments: List[Dict], new_attachments: List[Dict]):
+    try:
+        target_dir = get_images_dir(os_id)
+        if not os.path.exists(target_dir):
+            return
+
+        # Cria lista dos nomes de arquivos que DEVEM ficar
+        # Extrai o nome do arquivo da URL (ex: /attachments/images/OS003/foto.jpg -> foto.jpg)
+        kept_files = set()
+        for att in new_attachments:
+            url = att.get("url", "")
+            if f"/attachments/images/{os_id}/" in url:
+                filename = url.split('/')[-1]
+                kept_files.add(filename)
+
+        # Verifica arquivos físicos na pasta
+        physical_files = os.listdir(target_dir)
+        
+        for filename in physical_files:
+            if filename not in kept_files:
+                file_path = os.path.join(target_dir, filename)
+                try:
+                    os.remove(file_path)
+                    print(f"🗑️ [CLEANUP] Arquivo deletado: {filename}")
+                except Exception as e:
+                    print(f"⚠️ Erro ao deletar {filename}: {e}")
+
+    except Exception as e:
+        print(f"❌ Erro na limpeza de arquivos: {e}")
+
 # --- ROTAS ---
 
 @router.get("", response_model=List[OSModel])
-def list_os(db: Session = Depends(get_db)):
-    return db.query(models.OS).all()
+def list_os(x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    """
+    Lista OSs.
+    CORREÇÃO DE SEGURANÇA: Se x_user_id for fornecido, aplica filtro de visibilidade:
+    - Admin/Operador: Vê tudo.
+    - Outros (Clientes, Técnicos): Vê apenas OSs de usinas vinculadas (plantIds).
+    """
+    query = db.query(models.OS)
+    
+    if x_user_id:
+        user = db.query(models.User).filter(models.User.id == x_user_id).first()
+        if user:
+            # Se for Admin ou Operador, vê tudo.
+            if user.role not in ["Admin", "Operador"]:
+                # Filtra OSs cujas plantId estejam na lista de plantIds do usuário
+                user_plant_ids = user.plantIds or []
+                
+                if not user_plant_ids:
+                    return [] # Se não tem usina vinculada, não vê nada
+                
+                # Aplica o filtro IN
+                query = query.filter(models.OS.plantId.in_(user_plant_ids))
+    
+    return query.all()
 
 def _get_next_id(db: Session) -> str:
     last_os = db.query(models.OS).filter(models.OS.id.like("OS%")).order_by(models.OS.id.desc()).first()
@@ -160,9 +201,11 @@ def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db)):
     if not db_os:
         raise HTTPException(404, "OS not found")
     
-    # 1. Processar Imagens (Salvar no disco físico correto)
+    # 1. Processar Imagens (Salvar Novas)
     if payload.imageAttachments is not None:
+        old_attachments = db_os.imageAttachments or []
         final_attachments = process_attachments(os_id, payload.imageAttachments)
+        cleanup_deleted_files(os_id, old_attachments, final_attachments)
         db_os.imageAttachments = final_attachments
 
     # 2. Atualizar outros campos
@@ -190,16 +233,11 @@ def delete_os(os_id: str, db: Session = Depends(get_db)):
     if not db_os:
         raise HTTPException(404, "OS not found")
     
-    # Limpeza de arquivos ao deletar (Tenta encontrar a pasta correta)
     try:
-        current_working_dir = os.getcwd()
-        if os.path.basename(current_working_dir) == "attachments":
-            target_dir = os.path.abspath(f"images/{os_id}")
-        else:
-            target_dir = os.path.abspath(f"attachments/images/{os_id}")
-            
+        target_dir = get_images_dir(os_id)
         if os.path.exists(target_dir):
             shutil.rmtree(target_dir)
+            print(f"🗑️ [DELETADO] Pasta da OS: {target_dir}")
     except: pass
 
     db.delete(db_os)
