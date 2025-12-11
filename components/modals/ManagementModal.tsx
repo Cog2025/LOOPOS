@@ -4,7 +4,7 @@
 // Para usuários, mantém a lista/edição como já existente.
 
 import React, { useRef, useEffect } from 'react';
-import { canViewUser, canEditUser, canEditPlant } from '../utils/rbac';
+import { canViewUser, canEditUser } from '../utils/rbac';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -36,7 +36,6 @@ interface ManagementModalProps {
   setModalConfig: (config: ManagementModalConfig | null) => void;
 }
 
-// ✅ CORREÇÃO: Removida duplicidade e garantido mapeamento único
 const ROLE_SINGULAR: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
   [Role.COORDINATOR]: 'Coordenador',
@@ -44,12 +43,11 @@ const ROLE_SINGULAR: Partial<Record<Role, string>> = {
   [Role.OPERATOR]: 'Operador',
   [Role.TECHNICIAN]: 'Técnico',
   [Role.ASSISTANT]: 'Auxiliar',
-  [Role.CLIENT]: 'Cliente', // <--- Adicionado para evitar undefined
+  [Role.CLIENT]: 'Cliente', 
 };
 
 const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, config, setModalConfig }) => {
-  // ✅ CORREÇÃO: Usando 'addUser' (nome correto no Contexto) em vez de 'createUser'
-  const { users, plants, deleteUser, addUser, updateUser } = useData();
+  const { users, plants, deleteUser } = useData();
   const { user: currentUser } = useAuth();
 
   // --- ATOR (usuário logado) ---
@@ -76,31 +74,10 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
     }
   };
 
-  // ✅ HANDLER PARA SALVAR USUÁRIO (Passado para o UserForm)
-  const handleSaveUser = async (userData: Partial<User>) => {
-      try {
-          if (userData.id) {
-              // ✅ CORREÇÃO: updateUser aceita apenas 1 argumento (o objeto User completo)
-              // O TypeScript reclamava de "Expected 1 arguments, but got 2"
-              await updateUser(userData as User);
-          } else {
-              // ✅ CORREÇÃO: addUser aceita o objeto sem ID
-              await addUser(userData as Omit<User, 'id'>);
-          }
-          // Volta para o modal anterior (lista)
-          setModalConfig(config.data?.parentConfig);
-      } catch (error) {
-          console.error("Erro ao salvar usuário:", error);
-          alert("Erro ao salvar usuário.");
-      }
-  };
-
   // --- CONTEXTO RBAC ---
-  // Contém informações do usuário e plantas para decisões de acesso
   const ctx = { me: actor, plants };
 
   // --- PERMISSÕES ---
-  // Quem pode criar/editar usinas
   const canCreatePlant =
     actor.role === Role.ADMIN ||
     actor.role === Role.OPERATOR ||
@@ -108,7 +85,6 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
     actor.role === Role.SUPERVISOR;
 
   // --- ESTADO DO MODAL ---
-  // Determina se estamos gerenciando usuários ou usinas
   const isManagingUsers = config.type === 'MANAGE_USERS';
 
   const getSingular = () => {
@@ -131,17 +107,14 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
 
   // dados (MANAGE_USERS)
   // --- DADOS FILTRADOS ---
-  // Filtra usuários com base no RBAC do ator E pelo papel selecionado
   const items = isManagingUsers
     ? users.filter(u => {
         const canView = canViewUser(ctx, u, plants);
         const matchesRole = !config.data?.roles || config.data.roles.length === 0 || config.data.roles.includes(u.role as Role);
-        
         return canView && matchesRole;
       })
     : [];
 
-  // helper para habilitar "Novo Usuário" com base no papel alvo
   const canCreateUserRole = (role?: Role) =>
     !!role && canEditUser(ctx, { id: 'tmp', name: '', username: 'tmp', phone: '', role } as User, ctx.plants);
 
@@ -158,7 +131,6 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
     if (isManagingUsers) {
       setModalConfig({ type: 'USER_FORM', data: { user: item as User, parentConfig: config } });
     } else {
-      if (!canEditPlant(ctx, item as Plant)) return;
       setModalConfig({ type: 'PLANT_FORM', data: { plant: item as Plant, parentConfig: config } });
     }
   };
@@ -178,7 +150,6 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
           Editar
         </button>
         
-        {/* ✅ BOTÃO DELETE */}
         {actor.role === Role.ADMIN && (
           <button
             onClick={() => handleDeleteUser(user)}
@@ -237,7 +208,6 @@ const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, conf
               onClose={() => setModalConfig(config.data?.parentConfig)}
               initialData={config.data?.user}
               role={config.data?.role}
-              onSave={handleSaveUser} // ✅ Passa a função de salvar para evitar erro no UserForm
             />
           )}
           {config.type === 'PLANT_FORM' && (

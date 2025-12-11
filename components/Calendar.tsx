@@ -12,9 +12,8 @@ import { ptBR } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Download, FileText, Filter } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { generateOSReport } from './utils/pdfGenerator'; // Import do gerador
+import { generateOSReport } from './utils/pdfGenerator';
 
-// --- Interfaces ---
 interface CalendarProps {
   osList: OS[];
   onCardClick: (os: OS) => void;
@@ -30,29 +29,28 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
   const { plants, users, filterOSForUser } = useData();
   const { user } = useAuth();
 
-  // --- ESTADOS DE NAVEGAÇÃO ---
   const [currentDate, setCurrentDate] = useState(new Date());
-
-  // --- ESTADOS DE FILTRO ---
+  
+  // Filtros
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedPlant, setSelectedPlant] = useState('');
   const [selectedPriority, setSelectedPriority] = useState('');
   const [selectedAsset, setSelectedAsset] = useState('');
   const [selectedTechnician, setSelectedTechnician] = useState('');
 
-  // --- ESTADOS DE RELATÓRIO ---
+  // Relatório
   const [reportStartDate, setReportStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [reportEndDate, setReportEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false); // ✅ NOVO ESTADO
 
   const [moreInfoModal, setMoreInfoModal] = useState<{ isOpen: boolean; title: string; items: OS[] }>({
       isOpen: false, title: '', items: []
   });
 
-  // --- DADOS AUXILIARES ---
+  // Helpers
   const clients = Array.from(new Set(plants.map(p => p.client))).sort();
   const filteredPlants = selectedClient ? plants.filter(p => p.client === selectedClient) : plants;
   
-  // Helpers de Nome (NECESSÁRIOS PARA O PDF)
   const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || id;
   const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'N/A';
 
@@ -74,7 +72,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     return Array.from(assetsSet).sort();
   }, [osList]);
 
-  // --- LÓGICA DE FILTRAGEM ---
   const visibleOS = useMemo(() => {
     let list = user ? filterOSForUser(user) : osList;
     list = list.filter(os => {
@@ -95,7 +92,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     return list;
   }, [osList, user, filterOSForUser, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants]);
 
-  // --- DOWNLOAD PDF CORRIGIDO (Separando Ativo e Tarefa) ---
+  // --- DOWNLOAD PDF CORRIGIDO ---
   const handleDownloadReport = async (type: 'summary' | 'complete') => {
     const reportData = visibleOS.filter(os => {
       const osDate = new Date(os.startDate);
@@ -111,10 +108,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     }
 
     if (type === 'complete') {
-        const btn = document.activeElement as HTMLButtonElement;
-        const originalText = btn ? btn.innerText : '';
-        if(btn) { btn.innerText = "Gerando..."; btn.disabled = true; }
-
+        setIsGeneratingPDF(true); // ✅ Ativa loading
         try {
             await generateOSReport(
                 reportData, 
@@ -125,34 +119,27 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
             console.error(e);
             alert("Erro ao gerar PDF.");
         } finally {
-            if(btn) { btn.innerText = originalText; btn.disabled = false; }
+            setIsGeneratingPDF(false); // ✅ Desativa loading
         }
     } else {
-        // --- RELATÓRIO RESUMIDO (CORRIGIDO) ---
+        // --- RELATÓRIO RESUMIDO ---
         const doc = new jsPDF();
-        
         doc.setFontSize(16);
         doc.text("Relatório Resumido de Manutenção", 14, 15);
-        
         doc.setFontSize(10);
         const periodo = `Período: ${format(parseISO(reportStartDate), 'dd/MM/yyyy')} a ${format(parseISO(reportEndDate), 'dd/MM/yyyy')}`;
         doc.text(periodo, 14, 22);
         doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, 27);
 
-        // ✅ 1. Definindo Colunas Separadas
         const head = [['Data', 'OS ID', 'Usina', 'Ativo', 'Tarefa', 'Técnico', 'Status']];
-        
-        // ✅ 2. Mapeando os dados separadamente
         const body = reportData.map(os => {
-            // Lógica robusta para encontrar o nome do ativo
             const assetName = (os as any).assetName || (os.assets && os.assets.length > 0 ? os.assets.join(', ') : 'Geral');
-
             return [
                 format(new Date(os.startDate), 'dd/MM/yyyy'),
                 os.id,
                 getPlantName(os.plantId),
-                assetName,    // Coluna Ativo Exclusiva
-                os.activity,  // Coluna Tarefa Exclusiva
+                assetName,
+                os.activity,
                 getUserName(os.technicianId),
                 os.status
             ];
@@ -163,17 +150,16 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
             head: head,
             body: body,
             theme: 'striped',
-            headStyles: { fillColor: [41, 128, 185] }, // Azul
+            headStyles: { fillColor: [41, 128, 185] },
             styles: { fontSize: 8 },
-            // Ajuste de largura das colunas para caber tudo
             columnStyles: {
-                0: { cellWidth: 20 }, // Data
-                1: { cellWidth: 18 }, // ID
-                2: { cellWidth: 25 }, // Usina
-                3: { cellWidth: 30 }, // Ativo (Mais espaço)
-                4: { cellWidth: 'auto' }, // Tarefa (Ocupa o resto)
-                5: { cellWidth: 25 }, // Técnico
-                6: { cellWidth: 20 }  // Status
+                0: { cellWidth: 20 },
+                1: { cellWidth: 18 },
+                2: { cellWidth: 25 },
+                3: { cellWidth: 30 },
+                4: { cellWidth: 'auto' },
+                5: { cellWidth: 25 },
+                6: { cellWidth: 20 }
             }
         });
         
@@ -181,7 +167,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     }
   };
 
-  // --- LÓGICA DO CALENDÁRIO ---
   const calendarDays = useMemo<DayInfo[]>(() => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -275,8 +260,25 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
                 <input type="date" value={reportEndDate} onChange={e => setReportEndDate(e.target.value)} className={selectClass} />
              </div>
              <div className="h-8 w-px bg-gray-300 mx-2 hidden md:block"></div>
-             <button onClick={() => handleDownloadReport('summary')} className="flex items-center gap-1 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs hover:bg-gray-50 transition-colors"><FileText className="w-4 h-4" /> Resumido</button>
-             <button onClick={() => handleDownloadReport('complete')} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium shadow-sm transition-colors"><Download className="w-4 h-4" /> Completo</button>
+             
+             <button onClick={() => handleDownloadReport('summary')} className="flex items-center gap-1 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs hover:bg-gray-50 transition-colors">
+                <FileText className="w-4 h-4" /> Resumido
+             </button>
+             
+             {/* ✅ BOTÃO COM ESTADO CORRETO */}
+             <button 
+                onClick={() => handleDownloadReport('complete')} 
+                disabled={isGeneratingPDF}
+                className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+             >
+                {isGeneratingPDF ? (
+                    <span className="animate-pulse">Gerando...</span>
+                ) : (
+                    <>
+                        <Download className="w-4 h-4" /> Completo
+                    </>
+                )}
+             </button>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 // File: components/utils/pdfGenerator.ts
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { OS } from '../../types';
 
 // Helper: Converte segundos em HH:MM:SS
@@ -11,6 +11,14 @@ const formatDuration = (seconds?: number) => {
   const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
   const s = (seconds % 60).toString().padStart(2, '0');
   return `${h}:${m}:${s}`;
+};
+
+// Helper de Segurança para Datas
+const safeFormat = (dateStr: string | undefined | null, pattern: string): string => {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    if (!isValid(date)) return '-'; 
+    return format(date, pattern);
 };
 
 // Helper: Carrega imagem URL e converte para Base64
@@ -28,7 +36,6 @@ const getImageData = (url: string): Promise<string> => {
       resolve(canvas.toDataURL('image/jpeg'));
     };
     img.onerror = () => {
-        // console.warn("Falha ao carregar imagem para PDF:", url);
         resolve(''); 
     };
   });
@@ -39,7 +46,6 @@ interface ReportHelpers {
   getUserName: (id: string) => string;
 }
 
-// ✅ Alterado para retornar o DOC se shouldSave for false
 export const generateOSReport = async (
     osList: OS[], 
     title: string, 
@@ -50,14 +56,19 @@ export const generateOSReport = async (
   const doc = new jsPDF();
   let yPos = 15;
 
-  // Cabeçalho do Documento
+  // Capa / Título Principal
   doc.setFontSize(16); doc.text(title, 14, yPos);
   doc.setFontSize(10); doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, yPos + 6);
   yPos += 15;
 
   for (let i = 0; i < osList.length; i++) {
     const os = osList[i];
-    if (i > 0) { doc.addPage(); yPos = 15; }
+    
+    // Nova página para cada OS (exceto a primeira)
+    if (i > 0) { 
+        doc.addPage(); 
+        yPos = 15; 
+    }
 
     // 1. Título da OS
     doc.setFillColor(41, 128, 185); // Azul
@@ -67,15 +78,15 @@ export const generateOSReport = async (
     doc.text(`${os.id} - ${os.activity}`, 16, yPos + 5.5);
     yPos += 15;
 
-    // 2. Tabela de Dados Gerais (COM TEMPO DECORRIDO)
+    // 2. Tabela de Dados Gerais
     doc.setTextColor(0, 0, 0);
     const executionTime = formatDuration(os.executionTimeSeconds);
     
     const rows = [
       ['Status', os.status, 'Prioridade', os.priority],
-      ['Início', format(new Date(os.startDate), 'dd/MM/yyyy'), 'Fim', os.endDate ? format(new Date(os.endDate), 'dd/MM/yyyy') : '-'],
+      ['Início', safeFormat(os.startDate, 'dd/MM/yyyy'), 'Fim', safeFormat(os.endDate, 'dd/MM/yyyy')],
       ['Técnico', helpers.getUserName(os.technicianId), 'Tempo Decorrido', executionTime],
-      ['Ativo', (os as any).assetName || os.assets.join(', ') || '-', 'Usina', helpers.getPlantName(os.plantId)]
+      ['Ativo', (os as any).assetName || os.assets?.join(', ') || '-', 'Usina', helpers.getPlantName(os.plantId)]
     ];
 
     autoTable(doc, {
@@ -119,34 +130,50 @@ export const generateOSReport = async (
         ) || [];
         
         if (itemImages.length > 0) {
-          yPos += 2; 
-          let xImg = 20; 
+          yPos += 5; 
+          let xImg = 14; // Margem esquerda
           let maxH = 0;
+
+          // ✅ CONFIGURAÇÃO DE TAMANHO GRANDE (Checklist)
+          const imgW = 80;  // Bem maior (era 30)
+          const imgH = 60;  // Bem maior (era 30)
+          const gap = 10;   // Espaço entre fotos
 
           for (const img of itemImages) {
             if (img.url) {
               const base64 = await getImageData(img.url);
               if (base64) {
-                const imgW = 30;
-                const imgH = 30;
-                
-                if (xImg + 35 > 190) { xImg = 20; yPos += maxH + 5; maxH = 0; }
-                if (yPos + 45 > 280) { doc.addPage(); yPos = 15; xImg = 20; maxH = 0; }
+                // Se passar da margem direita (aprox 190), quebra linha
+                if (xImg + imgW > 200) { 
+                    xImg = 14; 
+                    yPos += maxH + 10; 
+                    maxH = 0; 
+                }
+                // Se passar do fim da página, cria nova página
+                if (yPos + imgH + 10 > 280) { 
+                    doc.addPage(); 
+                    yPos = 15; 
+                    xImg = 14; 
+                    maxH = 0; 
+                }
 
-                doc.addImage(base64, 'JPEG', xImg, yPos, imgW, imgH);
+                try {
+                    doc.addImage(base64, 'JPEG', xImg, yPos, imgW, imgH);
+                } catch(e) { console.error(e); }
                 
-                doc.setFontSize(7); doc.setFont('helvetica', 'normal');
-                // Quebra nome do arquivo para não sobrepor
+                doc.setFontSize(9); doc.setFont('helvetica', 'normal');
                 const fName = doc.splitTextToSize(img.fileName || 'Foto', imgW);
-                doc.text(fName, xImg, yPos + imgH + 3);
+                doc.text(fName, xImg, yPos + imgH + 4);
 
-                const h = imgH + (fName.length * 3) + 5;
+                const h = imgH + (fName.length * 4) + 5;
                 if (h > maxH) maxH = h;
-                xImg += 35;
+                
+                // Move X para a próxima imagem
+                xImg += imgW + gap;
               }
             }
           }
-          yPos += maxH + 5; 
+          yPos += maxH + 5; // Espaço após a linha de imagens
         } else {
             yPos += 2;
         }
@@ -164,31 +191,48 @@ export const generateOSReport = async (
 
       let xImg = 14;
       let maxH = 0;
+      
+      // ✅ CONFIGURAÇÃO DE TAMANHO GRANDE (Gerais)
+      const imgW = 85; // Ocupa quase metade da página
+      const imgH = 65; 
+      const gap = 10;
+
       for (const img of generalImages) {
         if (img.url) {
           const base64 = await getImageData(img.url);
           if (base64) {
-             const imgW = 40;
-             const imgH = 40;
-             if (xImg + 45 > 190) { xImg = 14; yPos += maxH + 5; maxH = 0; }
-             if (yPos + 50 > 280) { doc.addPage(); yPos = 15; xImg = 14; maxH = 0; }
+             // Quebra de linha (Grid de 2 colunas)
+             if (xImg + imgW > 200) { 
+                 xImg = 14; 
+                 yPos += maxH + 10; 
+                 maxH = 0; 
+             }
+             // Quebra de página
+             if (yPos + imgH + 10 > 280) { 
+                 doc.addPage(); 
+                 yPos = 15; 
+                 xImg = 14; 
+                 maxH = 0; 
+             }
              
-             doc.addImage(base64, 'JPEG', xImg, yPos, imgW, imgH);
+             try {
+                doc.addImage(base64, 'JPEG', xImg, yPos, imgW, imgH);
+             } catch (e) { console.error(e); }
              
-             doc.setFontSize(8);
+             doc.setFontSize(9);
              const splitN = doc.splitTextToSize(img.fileName || 'Geral', imgW);
-             doc.text(splitN, xImg, yPos + 44);
+             doc.text(splitN, xImg, yPos + imgH + 4);
              
-             const h = imgH + (splitN.length * 3) + 5;
+             const h = imgH + (splitN.length * 4) + 5;
              if (h > maxH) maxH = h;
-             xImg += 45;
+             
+             xImg += imgW + gap;
           }
         }
       }
     }
   }
 
-  // ✅ SÓ SALVA SE FOR TRUE, SENÃO RETORNA O DOC (PARA O ZIP)
   if (shouldSave) {
     doc.save(`${title.replace(/\s/g, '_')}.pdf`);
   }
