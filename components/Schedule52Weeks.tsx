@@ -1,21 +1,25 @@
 // File: components/Schedule52Weeks.tsx
-// Componente para exibir um cronograma de 52 semanas (1 ano)
-// Mostra as OSs distribuídas ao longo das semanas do ano com filtros avançados e gerenciamento em massa.
+// Componente para exibir um cronograma de 52 semanas (1 ano).
+// Funcionalidades:
+// - Visualização de densidade de tarefas por semana.
+// - Filtros avançados (Ano, Cliente, Usina, Prioridade, ATIVO, Técnico).
+// - Gerenciamento em massa (Exclusão).
+// - Integração com modal de agendamento automático.
 
 import React, { useState, useMemo } from 'react';
 import { OS, Role, Priority } from '../types';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
-import { OS_ACTIVITIES } from '../constants';
-import Modal from './modals/Modal'; // Importado para o recurso "Ver Mais"
+import Modal from './modals/Modal';
+import ScheduleOSModal from './modals/ScheduleOSModal'; 
 
 interface Schedule52WeeksProps {
-  osList: OS[]; // Lista completa de OSs (será filtrada aqui dentro)
-  onCardClick: (os: OS) => void; // Ação ao clicar em uma OS (abrir detalhes)
-  onOpenScheduler: () => void; // Ação para abrir o modal de agendamento (criação em lote)
+  osList: OS[]; 
+  onCardClick: (os: OS) => void; 
+  onOpenScheduler?: () => void; 
 }
 
-const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, onOpenScheduler }) => {
+const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }) => {
   const { plants, users, filterOSForUser, deleteOSBatch } = useData();
   const { user } = useAuth();
 
@@ -24,43 +28,94 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedPlant, setSelectedPlant] = useState('');
   const [selectedPriority, setSelectedPriority] = useState('');
-  const [selectedActivity, setSelectedActivity] = useState('');
+  
+  // MUDANÇA SOLICITADA: Filtro por Ativo (substitui Atividade)
+  const [selectedAsset, setSelectedAsset] = useState('');
+  
   const [selectedTechnician, setSelectedTechnician] = useState('');
 
-  // --- ESTADOS DE SELEÇÃO E MODAL ---
-  const [isSelectionMode, setIsSelectionMode] = useState(false); // Ativa/desativa checkboxes
-  const [selectedOSIds, setSelectedOSIds] = useState<string[]>([]); // IDs selecionados para exclusão
-  
-  // Estado para controlar o modal de "Ver Mais" (lista completa da semana)
+  // --- ESTADOS DE UI (Modais e Seleção) ---
+  const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
   const [moreInfoModal, setMoreInfoModal] = useState<{ isOpen: boolean; title: string; items: OS[] }>({
       isOpen: false, title: '', items: []
   });
 
-  // Verifica permissões para ações de gerenciamento
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedOSIds, setSelectedOSIds] = useState<string[]>([]);
+   
+  // Permissões de gerenciamento
   const canManage = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
 
-  // Dados para popular os selects de filtro
+  // Listas auxiliares para os Selects
   const years = [2024, 2025, 2026, 2027];
   const clients = Array.from(new Set(plants.map(p => p.client))).sort();
+  
+  // Filtra usinas baseado no cliente selecionado
   const filteredPlants = selectedClient ? plants.filter(p => p.client === selectedClient) : plants;
-  const technicians = users.filter(u => u.role === Role.TECHNICIAN);
 
-  // --- LÓGICA DE FILTRAGEM ---
-  // Filtra a lista de OSs com base em todos os critérios selecionados
+  // --- FILTRO DE TÉCNICOS (Lógica Estrita por Usina) ---
+  const technicians = useMemo(() => {
+    return users.filter(u => {
+      // 1. Deve ter o papel de Técnico
+      if (u.role !== Role.TECHNICIAN) return false;
+      
+      // 2. Se uma usina estiver selecionada, o técnico DEVE estar vinculado a ela
+      if (selectedPlant) {
+        // Verifica se plantIds existe e inclui a usina selecionada
+        return u.plantIds && u.plantIds.includes(selectedPlant);
+      }
+      
+      // 3. Se nenhuma usina selecionada, mostra todos (ou poderia filtrar por Cliente se desejado)
+      return true; 
+    });
+  }, [users, selectedPlant]);
+
+  // --- LISTA DE ATIVOS ÚNICOS (Para o Dropdown) ---
+  const uniqueAssets = useMemo(() => {
+    const assetsSet = new Set<string>();
+    // Varre todas as OSs disponíveis para extrair os nomes dos ativos
+    osList.forEach(os => {
+      // Verifica array de assets
+      if (os.assets && os.assets.length > 0) {
+        os.assets.forEach(a => assetsSet.add(a));
+      }
+      // Verifica campo legado ou auxiliar assetName
+      if ((os as any).assetName) {
+        assetsSet.add((os as any).assetName);
+      }
+    });
+    return Array.from(assetsSet).sort();
+  }, [osList]);
+
+  // --- LÓGICA CENTRAL DE FILTRAGEM (Grid) ---
   const visibleOS = useMemo(() => {
-    // Primeiro aplica o filtro de permissão do usuário (RBAC)
+    // 1. Filtro de Segurança (RBAC)
     let list = user ? filterOSForUser(user) : osList;
     
-    // Aplica filtros da UI
+    // 2. Filtros da Interface
     list = list.filter(os => {
         const date = new Date(os.startDate);
+        
+        // Filtro de Ano
         if (date.getFullYear() !== selectedYear) return false;
+        
+        // Filtro de Usina
         if (selectedPlant && os.plantId !== selectedPlant) return false;
+        
+        // Filtro de Prioridade
         if (selectedPriority && os.priority !== selectedPriority) return false;
-        if (selectedActivity && os.activity !== selectedActivity) return false;
+        
+        // Filtro de Ativo (Novo)
+        if (selectedAsset) {
+            const hasAsset = (os.assets && os.assets.includes(selectedAsset)) || 
+                             ((os as any).assetName === selectedAsset);
+            if (!hasAsset) return false;
+        }
+
+        // Filtro de Técnico
         if (selectedTechnician && os.technicianId !== selectedTechnician) return false;
         
-        // Filtro de cliente (se usina não estiver selecionada)
+        // Filtro de Cliente (apenas se usina não estiver selecionada)
         if (selectedClient && !selectedPlant) {
             const plant = plants.find(p => p.id === os.plantId);
             if (plant?.client !== selectedClient) return false;
@@ -68,17 +123,16 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
         return true;
     });
     return list;
-  }, [osList, user, selectedYear, selectedClient, selectedPlant, selectedPriority, selectedActivity, selectedTechnician, plants]);
+  }, [osList, user, selectedYear, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants, filterOSForUser]);
 
-  // --- GERAÇÃO DAS SEMANAS ---
-  // Calcula as datas de início e fim de cada uma das 52 semanas do ano selecionado
+  // --- GERAÇÃO DA ESTRUTURA DE SEMANAS ---
   const weeks = useMemo(() => {
     const weeksArray = [];
     const startDate = new Date(selectedYear, 0, 1);
     
-    // Ajusta para o primeiro dia da semana correto
+    // Ajuste para encontrar a primeira segunda-feira ou início lógico
     const day = startDate.getDay();
-    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); // Ajuste para começar Segunda ou Domingo
+    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); 
     const firstMonday = new Date(startDate.setDate(diff));
 
     for (let i = 0; i < 52; i++) {
@@ -91,8 +145,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
     return weeksArray;
   }, [selectedYear]);
 
-  // --- AGRUPAMENTO ---
-  // Distribui as OSs visíveis dentro das semanas correspondentes
+  // --- AGRUPAMENTO POR SEMANA ---
   const osByWeek = useMemo(() => {
     const grouped: Record<number, OS[]> = {};
     visibleOS.forEach(os => {
@@ -109,33 +162,29 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
     return grouped;
   }, [visibleOS, selectedYear]);
 
-  // --- AÇÕES ---
-
-  // Alterna a seleção de uma OS individual
+  // --- HANDLERS DE AÇÃO ---
+  
   const toggleSelection = (id: string) => {
       setSelectedOSIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
-  // Seleciona ou Desmarca TODAS as OSs visíveis
   const handleSelectAll = () => {
       if (selectedOSIds.length === visibleOS.length && visibleOS.length > 0) {
-          setSelectedOSIds([]); // Desmarcar tudo
+          setSelectedOSIds([]); 
       } else {
-          setSelectedOSIds(visibleOS.map(os => os.id)); // Marcar tudo que está filtrado
+          setSelectedOSIds(visibleOS.map(os => os.id)); 
       }
   };
 
-  // Exclusão em massa via API
   const handleDeleteSelected = async () => {
       if (!confirm(`Excluir ${selectedOSIds.length} OSs selecionadas?`)) return;
       await deleteOSBatch(selectedOSIds);
       setSelectedOSIds([]);
       setIsSelectionMode(false);
   };
-  
-  // Abre o modal para ver todas as OSs de uma semana específica
+   
   const handleShowMore = (weekNum: number, items: OS[]) => {
-      if (isSelectionMode) return; // Não abre modal se estiver selecionando
+      if (isSelectionMode) return; 
       setMoreInfoModal({
           isOpen: true,
           title: `Semana ${weekNum} - ${items.length} OSs`,
@@ -143,7 +192,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
       });
   };
 
-  // Helper de cores para prioridade (compatível com Tailwind)
+  // Helper de Cores para Prioridade (Tailwind classes)
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case 'Urgente': return 'bg-red-500 hover:bg-red-600';
@@ -154,32 +203,44 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
     }
   };
 
+  const getPlantName = (plantId: string) => {
+    return plants.find(p => p.id === plantId)?.name || plantId;
+  };
+
   const selectClass = "text-xs border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1 px-2";
 
   return (
     <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 p-4">
       
-      {/* BARRA DE FERRAMENTAS E FILTROS */}
+      {/* --- BARRA DE FILTROS --- */}
       <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm mb-4 flex flex-wrap gap-3 items-center justify-between">
         
-        {/* Grupo de Filtros */}
         <div className="flex flex-wrap gap-2 items-center">
             <span className="text-sm font-bold text-gray-700 dark:text-gray-300 mr-2">Filtros:</span>
             <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className={selectClass}>{years.map(y => <option key={y} value={y}>{y}</option>)}</select>
             <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}><option value="">Todos Clientes</option>{clients.map(c => <option key={c} value={c}>{c}</option>)}</select>
             <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}><option value="">Todas Usinas</option>{filteredPlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
             <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={selectClass}><option value="">Todas Prioridades</option>{Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}</select>
-            <select value={selectedActivity} onChange={e => setSelectedActivity(e.target.value)} className={selectClass}><option value="">Todas Atividades</option>{OS_ACTIVITIES.map(a => <option key={a} value={a}>{a}</option>)}</select>
-            <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}><option value="">Todos Técnicos</option>{technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+            
+            {/* Filtro de Ativo (Novo) */}
+            <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={selectClass}>
+                <option value="">Todos Ativos</option>
+                {uniqueAssets.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+
+            {/* Filtro de Técnico (Filtrado por Usina) */}
+            <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}>
+                <option value="">Todos Técnicos</option>
+                {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
         </div>
 
-        {/* Botões de Ação */}
+        {/* --- BOTÕES DE AÇÃO --- */}
         <div className="flex gap-2">
             {canManage && (
                 <>
                     {isSelectionMode ? (
                         <div className="flex gap-2 animate-fadeIn items-center">
-                            {/* Checkbox Selecionar Todos */}
                             <label className="flex items-center space-x-1 cursor-pointer bg-blue-50 dark:bg-slate-700 px-2 py-1 rounded border dark:border-gray-600" title="Selecionar todos os itens visíveis">
                                 <input type="checkbox" checked={selectedOSIds.length === visibleOS.length && visibleOS.length > 0} onChange={handleSelectAll} className="rounded text-blue-600" />
                                 <span className="text-xs font-bold text-gray-700 dark:text-gray-300">Todos</span>
@@ -194,33 +255,30 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
                         </div>
                     ) : (
                         <button onClick={() => setIsSelectionMode(true)} className="px-3 py-1 text-xs font-bold text-blue-600 bg-blue-100 rounded hover:bg-blue-200">
-                            ✏️ Gerenciar em Massa
+                            ✏️ Gerenciar
                         </button>
                     )}
-                    <button onClick={onOpenScheduler} className="px-3 py-1 text-xs font-bold text-white bg-green-600 rounded hover:bg-green-700">+ Agendar</button>
+                    <button onClick={() => setIsSchedulerOpen(true)} className="px-3 py-1 text-xs font-bold text-white bg-green-600 rounded hover:bg-green-700">+ Agendar</button>
                 </>
             )}
         </div>
       </div>
 
-      {/* GRID DE 52 SEMANAS */}
+      {/* --- GRID DE 52 SEMANAS --- */}
       <div className="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-13 gap-2 overflow-y-auto flex-1 pr-2">
         {weeks.map(w => {
             const items = osByWeek[w.weekNumber] || [];
-            
-            // Lógica de visualização limitada (max 3 itens por célula)
+            // Limite de visualização por célula para não quebrar o layout
             const visibleLimit = 3;
             const visibleItems = items.slice(0, visibleLimit);
             const hiddenCount = items.length - visibleLimit;
 
             return (
                 <div key={w.weekNumber} className={`border dark:border-gray-700 bg-white dark:bg-gray-800 rounded p-1 min-h-[100px] flex flex-col transition-colors ${isSelectionMode ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer' : ''}`}>
-                    {/* Cabeçalho da Célula */}
                     <div className="text-[10px] text-center text-gray-400 border-b dark:border-gray-700 mb-1">
                         S{w.weekNumber} <span className="opacity-50">{w.start.getDate()}/{w.start.getMonth()+1}</span>
                     </div>
                     
-                    {/* Lista de OSs */}
                     <div className="flex-1 space-y-1 overflow-y-auto max-h-[120px] scrollbar-thin">
                         {visibleItems.map(os => {
                             const isSelected = selectedOSIds.includes(os.id);
@@ -231,23 +289,21 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
                                         e.stopPropagation();
                                         isSelectionMode ? toggleSelection(os.id) : onCardClick(os);
                                     }}
-                                    className={`text-[10px] p-1 rounded text-white cursor-pointer truncate flex items-center justify-between shadow-sm transition-all ${
+                                    className={`text-[9px] p-1 rounded text-white cursor-pointer truncate flex flex-col justify-center shadow-sm transition-all ${
                                         isSelectionMode && isSelected ? 'ring-2 ring-red-500 bg-red-500 scale-95' : 
                                         getPriorityColor(os.priority)
                                     }`}
-                                    title={`${os.id} - ${os.activity} (${os.priority})`}
+                                    title={`${getPlantName(os.plantId)} - ${os.activity}`}
                                 >
-                                    <span className="truncate">{os.id}</span>
-                                    {isSelectionMode && <div className={`w-2 h-2 rounded-full ml-1 ${isSelected ? 'bg-white' : 'bg-black/20'}`} />}
+                                    <span className="font-bold truncate">{getPlantName(os.plantId)}</span>
+                                    <span className="truncate opacity-90">{os.activity}</span>
                                 </div>
                             );
                         })}
 
-                        {/* Indicador de Mais Itens (Clickable) */}
                         {hiddenCount > 0 && (
                             <div 
-                                className="text-[9px] text-center text-gray-500 dark:text-gray-400 font-bold cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-0.5 transition-colors"
-                                title={`${hiddenCount} OSs ocultas nesta semana. Clique para ver.`}
+                                className="text-[9px] text-center text-gray-500 dark:text-gray-400 font-bold cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-0.5"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     handleShowMore(w.weekNumber, items);
@@ -262,7 +318,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
         })}
       </div>
 
-      {/* MODAL DE "VER MAIS" (Lista completa da semana) */}
+      {/* MODAL DE "VER MAIS" */}
       {moreInfoModal.isOpen && (
           <Modal 
             isOpen={true} 
@@ -276,18 +332,27 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
                         key={os.id} 
                         onClick={() => {
                             setMoreInfoModal({ ...moreInfoModal, isOpen: false });
-                            onCardClick(os); // Abre detalhe da OS
+                            onCardClick(os);
                         }}
                         className={`p-3 rounded-lg text-white cursor-pointer hover:opacity-90 shadow-sm flex justify-between items-center ${getPriorityColor(os.priority)}`}
                       >
-                          <span className="font-bold">{os.id}</span>
-                          <span className="text-sm truncate ml-2 flex-1">{os.activity}</span>
-                          <span className="text-xs bg-black/20 px-2 py-0.5 rounded">{new Date(os.startDate).toLocaleDateString()}</span>
+                          <div className="flex flex-col overflow-hidden">
+                             <span className="font-bold text-sm">{getPlantName(os.plantId)}</span>
+                             <span className="text-xs truncate">{os.activity}</span>
+                          </div>
+                          <span className="text-xs bg-black/20 px-2 py-0.5 rounded whitespace-nowrap ml-2">{new Date(os.startDate).toLocaleDateString()}</span>
                       </div>
                   ))}
               </div>
           </Modal>
       )}
+
+      {/* MODAL DE AGENDAMENTO */}
+      <ScheduleOSModal 
+        isOpen={isSchedulerOpen}
+        onClose={() => setIsSchedulerOpen(false)}
+      />
+
     </div>
   );
 };
