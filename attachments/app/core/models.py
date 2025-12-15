@@ -23,9 +23,8 @@ class Plant(Base):
     name = Column(String)
     stringCount = Column(Integer, default=0)
     trackerCount = Column(Integer, default=0)
-    subPlants = Column(JSON, default=list) # ✅ Já estava correto
-    assets = Column(JSON, default=list)    # ✅ Já estava correto
-    # Campos de atribuição (opcional se quiser salvar no objeto da planta também, mas seu sistema usa User)
+    subPlants = Column(JSON, default=list)
+    assets = Column(JSON, default=list)
     coordinatorId = Column(String, nullable=True)
 
 class TaskTemplate(Base):
@@ -77,13 +76,15 @@ class OS(Base):
     assets = Column(JSON, default=list)
     logs = Column(JSON, default=list)
     imageAttachments = Column(JSON, default=list)
+    
+    # Execução
     executionStart = Column(String, nullable=True)
     executionTimeSeconds = Column(Integer, default=0)
     isInReview = Column(Boolean, default=False)
     maintenancePlanId = Column(String, nullable=True)
     subtasksStatus = Column(JSON, default=list)
 
-    # ✅ NOVOS CAMPOS OBRIGATÓRIOS (Adicione estes):
+    # Detalhes
     subPlantId = Column(String, nullable=True)
     inverterId = Column(String, nullable=True)
     classification1 = Column(String, nullable=True)
@@ -91,6 +92,10 @@ class OS(Base):
     estimatedDuration = Column(Integer, default=0)
     plannedDowntime = Column(Integer, default=0)
 
+    # ✅ NOVOS CAMPOS PARA TRAVA E HISTÓRICO
+    currentExecutorId = Column(String, nullable=True) # Quem está executando AGORA (Lock)
+    executionHistory = Column(JSON, default=list)     # Lista de sessões de execução
+    
 class Notification(Base):
     __tablename__ = "notifications"
     id = Column(String, primary_key=True, index=True)

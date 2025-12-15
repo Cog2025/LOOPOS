@@ -3,16 +3,16 @@
 // ATUALIZAÇÃO: Usa diretamente o Contexto (addUser/updateUser) para salvar, eliminando erro de onSave.
 
 import React, { useState, useMemo } from 'react';
-import { User, Role } from '../../types';
+import { User, Role, Plant } from '../../types';
 import { useData } from '../../contexts/DataContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 interface UserFormProps {
     user?: User; // Se undefined, é criação
-    initialData?: User; // Compatibilidade
-    role?: Role;  // Role pré-definida
+    role?: Role; // Role pré-selecionada vinda do ManagementModal
     onClose: () => void;
-    isOpen?: boolean;
-    // onSave removido, pois o form gerencia seu próprio salvamento via Contexto
+    isOpen: boolean;
 }
 
 const roleLabels: Partial<Record<string, string>> = {
@@ -27,219 +27,177 @@ const roleLabels: Partial<Record<string, string>> = {
 
 const UserForm: React.FC<UserFormProps> = ({ 
     user: propUser, 
-    initialData, 
-    role, 
+    role: initialRole, 
     onClose, 
-    isOpen = true 
+    isOpen 
 }) => {
-    // Adapter para props
-    const user = propUser || initialData;
-    
-    // ✅ CORREÇÃO: Importando as funções corretas do Contexto
-    const { plants, addUser, updateUser } = useData();
-    
-    const [name, setName] = useState(user?.name || '');
-    const [username, setUsername] = useState(user?.username || '');
-    const [password, setPassword] = useState(''); 
-    const [email, setEmail] = useState(user?.email || '');
-    const [phone, setPhone] = useState(user?.phone || '');
-    const [selectedPlants, setSelectedPlants] = useState<string[]>(user?.plantIds || []);
-    const [selectedClientGroup, setSelectedClientGroup] = useState<string>('');
-    const [isSaving, setIsSaving] = useState(false);
-    
-    const currentRole = user?.role || role || Role.CLIENT;
+    const { addUser, updateUser, plants } = useData();
+    const { user: currentUser } = useAuth(); 
 
-    // Dropdown inteligente de clientes
-    const uniqueClients = useMemo(() => {
-        const clients = new Set(plants.map(p => p.client).filter(Boolean));
-        return Array.from(clients).sort();
+    const isEditing = !!propUser;
+    
+    // ✅ PRIORIDADE: Usuário existente > Cargo clicado (initialRole) > Padrão (Técnico)
+    const [formData, setFormData] = useState<Partial<User>>({
+        name: propUser?.name || '',
+        username: propUser?.username || '',
+        email: propUser?.email || '',
+        phone: propUser?.phone || '',
+        role: propUser?.role || initialRole || Role.TECHNICIAN, 
+        password: '',
+        plantIds: propUser?.plantIds || []
+    });
+
+    const [isSaving, setIsSaving] = useState(false);
+    const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
+
+    if (!isOpen) return null;
+
+    // --- REGRAS DE EXIBIÇÃO ---
+    // Se for Admin ou Operador, NÃO MOSTRA atribuição de usinas (acesso global)
+    const isGlobalRole = formData.role === Role.ADMIN || formData.role === Role.OPERATOR;
+
+    const isSelfEditing = currentUser?.id === propUser?.id;
+    const canEditAssignments = useMemo(() => {
+        if (currentUser?.role === Role.ADMIN) return true;
+        if (isSelfEditing) return false; 
+        return true; 
+    }, [currentUser, isSelfEditing]);
+
+    const groupedPlants = useMemo(() => {
+        const groups: Record<string, Plant[]> = {};
+        plants.forEach(plant => {
+            const clientName = plant.client || 'Sem Cliente';
+            if (!groups[clientName]) groups[clientName] = [];
+            groups[clientName].push(plant);
+        });
+        return groups;
     }, [plants]);
 
-    const handleClientGroupChange = (clientName: string) => {
-        setSelectedClientGroup(clientName);
-        if (clientName) {
-            const plantsOfClient = plants
-                .filter(p => p.client === clientName)
-                .map(p => p.id);
-            setSelectedPlants(plantsOfClient);
-        }
+    const toggleClientExpansion = (client: string) => {
+        setExpandedClients(prev => ({ ...prev, [client]: !prev[client] }));
+    };
+
+    const togglePlant = (plantId: string) => {
+        if (!canEditAssignments) return; 
+        setFormData(prev => {
+            const current = prev.plantIds || [];
+            if (current.includes(plantId)) {
+                return { ...prev, plantIds: current.filter(id => id !== plantId) };
+            } else {
+                return { ...prev, plantIds: [...current, plantId] };
+            }
+        });
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSaving(true);
-        
-        const userData: Partial<User> = {
-            ...user,
-            name,
-            username,
-            role: currentRole,
-            email,
-            phone,
-            plantIds: selectedPlants
-        };
-
-        if (password) {
-            userData.password = password;
-        }
-
         try {
-            if (user?.id) {
-                // Edição
-                await updateUser(userData as User);
+            if (isEditing && propUser?.id) {
+                await updateUser({ ...propUser, ...formData } as User);
             } else {
-                // Criação (Omitindo ID pois o backend gera)
-                await addUser(userData as Omit<User, 'id'>);
+                await addUser(formData as any);
             }
             onClose();
         } catch (error) {
-            console.error("Erro ao salvar usuário:", error);
-            alert("Erro ao salvar usuário. Verifique se o login já existe.");
+            console.error("Erro ao salvar:", error);
+            alert("Erro ao salvar usuário.");
         } finally {
             setIsSaving(false);
         }
     };
 
-    const togglePlant = (plantId: string) => {
-        setSelectedPlants(prev => 
-            prev.includes(plantId) 
-                ? prev.filter(id => id !== plantId)
-                : [...prev, plantId]
-        );
-    };
-
-    if (!isOpen) return null;
-
-    const roleTitle = roleLabels[currentRole] || currentRole;
+    const labelClass = "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1";
+    const inputClass = "w-full p-2 border rounded text-sm bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none";
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg w-full max-w-md shadow-xl flex flex-col max-h-[90vh]">
-                <h2 className="text-xl font-bold mb-4 dark:text-white shrink-0">
-                    {user ? 'Editar Usuário' : `Novo ${roleTitle}`}
-                </h2>
-                
-                <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto pr-2 custom-scrollbar">
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Nome Completo</label>
-                        <input 
-                            required
-                            type="text" 
-                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            value={name}
-                            onChange={e => setName(e.target.value)}
-                        />
-                    </div>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                        {isEditing ? 'Editar Usuário' : 'Novo Usuário'}
+                    </h2>
+                </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Usuário (Login)</label>
-                            <input 
-                                required
-                                type="text" 
-                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                value={username}
-                                onChange={e => setUsername(e.target.value)}
-                            />
+                            <label className={labelClass}>Nome Completo</label>
+                            <input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className={inputClass} />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Senha</label>
-                            <input 
-                                type="password" 
-                                placeholder={user ? "(Manter atual)" : "Senha inicial"}
-                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                value={password}
-                                onChange={e => setPassword(e.target.value)}
-                            />
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Email</label>
-                            <input 
-                                type="email" 
-                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                value={email}
-                                onChange={e => setEmail(e.target.value)}
-                            />
+                            <label className={labelClass}>Usuário (Login)</label>
+                            <input required value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className={inputClass} />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Telefone</label>
-                            <input 
-                                type="tel" 
-                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                value={phone}
-                                onChange={e => setPhone(e.target.value)}
-                            />
+                            <label className={labelClass}>E-mail (Opcional)</label>
+                            <input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className={inputClass} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Telefone</label>
+                            <input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className={inputClass} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Cargo / Função</label>
+                            <select 
+                                value={formData.role} 
+                                onChange={e => setFormData({...formData, role: e.target.value as Role})}
+                                className={inputClass}
+                                // Se o usuário está criando um item específico (initialRole existe), trava ou deixa editar?
+                                // Geralmente deixa editar, mas pré-seleciona. Se quiser travar, descomente o disabled abaixo.
+                                // disabled={!!initialRole && !isEditing} 
+                            >
+                                {Object.entries(roleLabels).map(([key, label]) => (
+                                    <option key={key} value={key}>{label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className={labelClass}>Senha {isEditing && '(Deixe em branco para manter)'}</label>
+                            <input type="password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className={inputClass} placeholder={isEditing ? "******" : "Senha inicial"} required={!isEditing} />
                         </div>
                     </div>
 
-                    <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-2">
-                        <label className="block text-sm font-bold text-gray-900 dark:text-white mb-2">
-                            Associação de Usinas
-                        </label>
-                        
-                        {currentRole === Role.CLIENT && (
-                            <div className="mb-3 bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-100 dark:border-blue-800">
-                                <label className="block text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 uppercase">
-                                    Vincular a um Cliente (Seleção Rápida)
-                                </label>
-                                <select 
-                                    className="w-full p-2 border border-blue-300 rounded text-sm bg-white dark:bg-gray-700 dark:text-white dark:border-gray-600"
-                                    value={selectedClientGroup}
-                                    onChange={(e) => handleClientGroupChange(e.target.value)}
-                                >
-                                    <option value="">Selecione uma empresa...</option>
-                                    {uniqueClients.map(c => (
-                                        <option key={c} value={c}>{c}</option>
-                                    ))}
-                                </select>
-                                <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">
-                                    Selecionar uma empresa marcará automaticamente todas as suas usinas abaixo.
-                                </p>
+                    {/* ✅ SEÇÃO DE USINAS (CONDICIONAL) */}
+                    {!isGlobalRole && (
+                        <div className="mt-6 border-t dark:border-gray-700 pt-4">
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Usinas Atribuídas</label>
+                                <span className="text-xs text-gray-500">{canEditAssignments ? 'Selecione as usinas permitidas' : 'Visualização apenas'}</span>
                             </div>
-                        )}
-
-                        <div className="max-h-40 overflow-y-auto border border-gray-300 rounded p-2 dark:bg-gray-700 dark:border-gray-600 bg-gray-50">
-                            {plants.length === 0 && <p className="text-xs text-gray-500">Nenhuma usina cadastrada.</p>}
                             
-                            {[...plants].sort((a,b) => a.name.localeCompare(b.name)).map(plant => (
-                                <label key={plant.id} className="flex items-center space-x-2 p-1.5 hover:bg-white dark:hover:bg-gray-600 rounded cursor-pointer transition-colors border-b border-transparent hover:border-gray-200">
-                                    <input 
-                                        type="checkbox"
-                                        checked={selectedPlants.includes(plant.id)}
-                                        onChange={() => togglePlant(plant.id)}
-                                        className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
-                                    />
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-medium dark:text-gray-200">{plant.name}</span>
-                                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">{plant.client}</span>
-                                    </div>
-                                </label>
-                            ))}
+                            <div className="space-y-2 max-h-60 overflow-y-auto border rounded p-2 bg-gray-50 dark:bg-gray-900/50 dark:border-gray-700">
+                                {Object.entries(groupedPlants).map(([clientName, clientPlants]) => {
+                                    const isExpanded = expandedClients[clientName];
+                                    return (
+                                        <div key={clientName} className="border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 overflow-hidden">
+                                            <button type="button" onClick={() => toggleClientExpansion(clientName)} className="w-full flex items-center justify-between p-2 bg-gray-100 dark:bg-gray-700/50 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-left">
+                                                <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">{clientName} ({clientPlants.length})</span>
+                                                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                            </button>
+                                            {isExpanded && (
+                                                <div className="p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                    {clientPlants.map(plant => {
+                                                        const isChecked = formData.plantIds?.includes(plant.id);
+                                                        return (
+                                                            <label key={plant.id} className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors text-sm ${isChecked ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' : 'hover:bg-gray-50 dark:hover:bg-gray-700 border-transparent'} ${!canEditAssignments ? 'opacity-70 cursor-not-allowed' : ''}`}>
+                                                                <input type="checkbox" checked={isChecked} onChange={() => togglePlant(plant.id)} disabled={!canEditAssignments} className="rounded text-blue-600 focus:ring-blue-500" />
+                                                                <span className="text-gray-700 dark:text-gray-300 truncate">{plant.name}</span>
+                                                            </label>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1 text-right">
-                            {selectedPlants.length} usina(s) selecionada(s).
-                        </p>
-                    </div>
+                    )}
 
                     <div className="flex justify-end gap-2 pt-4">
-                        <button 
-                            type="button" 
-                            onClick={onClose}
-                            disabled={isSaving}
-                            className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded font-medium dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
-                        >
-                            Cancelar
-                        </button>
-                        <button 
-                            type="submit" 
-                            disabled={isSaving}
-                            className="px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow transition-colors flex items-center gap-2"
-                        >
-                            {isSaving ? 'Salvando...' : 'Salvar Usuário'}
-                        </button>
+                        <button type="button" onClick={onClose} disabled={isSaving} className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded font-medium dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors">Cancelar</button>
+                        <button type="submit" disabled={isSaving} className="px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow transition-colors flex items-center gap-2">{isSaving ? 'Salvando...' : 'Salvar Usuário'}</button>
                     </div>
                 </form>
             </div>

@@ -1,10 +1,10 @@
 // File: components/modals/OSExecutionModal.tsx
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Modal from './Modal';
-import { OS, OSStatus, SubtaskItem, ImageAttachment } from '../../types';
+import { OS, SubtaskItem } from '../../types';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { Clock, CheckSquare, Square, Camera, Trash2, UploadCloud, Save, PauseCircle } from 'lucide-react';
+import { CheckSquare, Square, Camera, Trash2, UploadCloud, Play, Pause, Lock, History, CheckCircle } from 'lucide-react';
 
 interface Props {
     os: OS;
@@ -12,99 +12,165 @@ interface Props {
 }
 
 const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
-    const { patchOS, addOSAttachment, deleteOSAttachment, osList } = useData();
+    // Hooks
+    const { addOSAttachment, deleteOSAttachment, osList, reloadFromAPI } = useData();
     const { user } = useAuth();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // LIVE OS: Garante dados frescos do contexto
-    const liveOS = useMemo(() => osList.find(o => o.id === os.id) || os, [osList, os.id]);
-
-    const [elapsed, setElapsed] = useState(liveOS.executionTimeSeconds || 0);
+    // Estado Local
+    const [subtasks, setSubtasks] = useState<SubtaskItem[]>(os.subtasksStatus || []);
+    const [isRunning, setIsRunning] = useState(false);
+    const [isLockedByOther, setIsLockedByOther] = useState(false);
+    const [lockerName, setLockerName] = useState('');
+    const [elapsedSession, setElapsedSession] = useState(0);
+    const [showHistory, setShowHistory] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
-    
-    // Checklist local
-    const initializeChecklist = (): SubtaskItem[] => {
-        if (!liveOS.subtasksStatus || liveOS.subtasksStatus.length === 0) return [];
-        return liveOS.subtasksStatus.map(item => ({
-            id: item.id,
-            text: item.text,
-            done: item.done,
-            comment: (item as any).comment || ''
-        }));
-    };
-    const [checklist, setChecklist] = useState<SubtaskItem[]>(initializeChecklist());
 
-    // CRONÔMETRO AUTOMÁTICO (Auto-start, sem pausa manual)
+    // Live OS (dados atualizados em tempo real)
+    const liveOS = osList.find(o => o.id === os.id) || os;
+
+    // Formata segundos em HH:MM:SS
+    const formatTime = (totalSeconds: number) => {
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
+    // 1. Efeito de Inicialização (Verificar Trava e Estado)
     useEffect(() => {
-        if (liveOS.status !== OSStatus.IN_PROGRESS) {
-            patchOS(liveOS.id, { 
-                status: OSStatus.IN_PROGRESS, 
-                executionStart: liveOS.executionStart || new Date().toISOString() 
-            });
+        if (liveOS) {
+            setSubtasks(liveOS.subtasksStatus || []);
+            
+            // Verifica se está travada por outro
+            if (liveOS.currentExecutorId && liveOS.currentExecutorId !== user?.id) {
+                setIsLockedByOther(true);
+                setLockerName('Outro usuário'); 
+                setIsRunning(false);
+            } 
+            // Se EU sou o executor
+            else if (liveOS.currentExecutorId === user?.id) {
+                setIsLockedByOther(false);
+                setIsRunning(true);
+            } else {
+                // Ninguém executando
+                setIsLockedByOther(false);
+                setIsRunning(false);
+                setElapsedSession(0);
+            }
+        }
+    }, [liveOS, user]);
+
+    // 2. Timer ABSOLUTO (Corrigido Fuso Horário e Aba em Segundo Plano)
+    useEffect(() => {
+        let interval: any;
+
+        const updateTimer = () => {
+            if (liveOS.executionStart) {
+                // O Backend envia string UTC (ex: "2023-10-27T10:00:00") sem 'Z'.
+                // Se o navegador ler isso localmente, o tempo fica errado.
+                // ✅ CORREÇÃO: Adicionamos 'Z' se não houver, forçando UTC.
+                let dateStr = liveOS.executionStart;
+                if (!dateStr.endsWith('Z')) {
+                    dateStr += 'Z';
+                }
+
+                const start = new Date(dateStr).getTime();
+                const now = new Date().getTime();
+                
+                // Diferença em segundos
+                const diff = Math.max(0, Math.floor((now - start) / 1000));
+                setElapsedSession(diff);
+            }
+        };
+
+        if (isRunning) {
+            updateTimer(); // Atualiza imediatamente
+            interval = setInterval(updateTimer, 1000); // E a cada segundo
         }
 
-        const interval = setInterval(() => setElapsed(e => e + 1), 1000);
         return () => clearInterval(interval);
-    }, []);
+    }, [isRunning, liveOS.executionStart]);
 
-    const formatTime = (sec: number) => {
-        const h = Math.floor(sec / 3600).toString().padStart(2, '0');
-        const m = Math.floor((sec % 3600) / 60).toString().padStart(2, '0');
-        const s = (sec % 60).toString().padStart(2, '0');
-        return `${h}:${m}:${s}`;
-    };
+    // --- AÇÕES DE API ---
 
-    // --- HANDLERS ---
+    const apiCall = async (url: string, method: 'POST', body?: any) => {
+        const token = localStorage.getItem('token');
+        const headers: any = { 
+            'Content-Type': 'application/json',
+            'x-user-id': user?.id || ''
+        };
+        if(token) headers['Authorization'] = `Bearer ${token}`;
 
-    const handleSaveAndClose = async () => {
-        await patchOS(liveOS.id, { 
-            executionTimeSeconds: elapsed,
-            subtasksStatus: checklist
+        const res = await fetch(url, {
+            method,
+            headers,
+            body: body ? JSON.stringify(body) : undefined
         });
-        onClose();
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Erro na requisição');
+        }
+        return res.json();
     };
+
+    const handleStart = async () => {
+        try {
+            await apiCall(`/api/os/${liveOS.id}/start`, 'POST');
+            setIsRunning(true);
+            reloadFromAPI(); 
+        } catch (error: any) {
+            alert(error.message);
+            if (error.message.includes("Bloqueado")) onClose();
+        }
+    };
+
+    const handlePause = async (finished = false) => {
+        try {
+            const payload = {
+                subtasksStatus: subtasks,
+                finished: finished
+            };
+            await apiCall(`/api/os/${liveOS.id}/pause`, 'POST', payload);
+            
+            setIsRunning(false);
+            setElapsedSession(0);
+            reloadFromAPI();
+            onClose();
+        } catch (error: any) {
+            alert("Erro ao salvar: " + error.message);
+        }
+    };
+
+    // --- MANIPULAÇÃO LOCAL ---
 
     const handleCheck = (idx: number) => {
-        const newCheck = [...checklist];
+        if (!isRunning) {
+            alert("Clique em 'INICIAR EXECUÇÃO' para marcar itens.");
+            return;
+        }
+        const newCheck = [...subtasks];
         newCheck[idx].done = !newCheck[idx].done;
-        setChecklist(newCheck);
-        // Opcional: salvar em tempo real
-        patchOS(liveOS.id, { subtasksStatus: newCheck });
+        setSubtasks(newCheck);
     };
 
     const handleCommentChange = (idx: number, text: string) => {
-        const newCheck = [...checklist];
+        if (!isRunning) return;
+        const newCheck = [...subtasks];
         newCheck[idx].comment = text;
-        setChecklist(newCheck);
+        setSubtasks(newCheck);
     };
 
-    const saveChecklist = () => {
-        patchOS(liveOS.id, { subtasksStatus: checklist });
-    };
-
-    const handleFinish = async () => {
-        const allDone = checklist.every(i => i.done);
-        if (!allDone && !confirm("Nem todos os itens foram marcados. Deseja finalizar mesmo assim?")) return;
-
-        if (confirm("Finalizar OS e enviar para revisão?")) {
-            await patchOS(liveOS.id, { 
-                status: OSStatus.IN_REVIEW, 
-                executionTimeSeconds: elapsed, 
-                endDate: new Date().toISOString(), 
-                subtasksStatus: checklist 
-            });
-            onClose();
-        }
-    };
-
-    // --- UPLOAD DE FOTOS (CORRIGIDO) ---
+    // --- UPLOAD DE FOTOS ---
     const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, subtaskIdx?: number) => {
+        if (!isRunning) { alert("Inicie a execução para anexar fotos."); return; }
         if (!e.target.files || e.target.files.length === 0) return;
+        
         setIsUploading(true);
         const files = Array.from(e.target.files);
 
-        // ✅ CORREÇÃO: Removemos propriedades extras (timestamp, type) que não existem na interface
-        const readFile = (file: File): Promise<Omit<ImageAttachment, 'id' | 'uploadedAt'>> => {
+        const readFile = (file: File): Promise<any> => {
             return new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onloadend = () => {
@@ -120,10 +186,7 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
         };
 
         try {
-            // 1. Lê todos os arquivos
             const newAttachments = await Promise.all(files.map(file => readFile(file)));
-
-            // 2. Envia um por um
             for (const att of newAttachments) {
                 await addOSAttachment(liveOS.id, att);
             }
@@ -137,153 +200,215 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
     };
 
     const handleDeletePhoto = async (attId: string) => {
+        if (!isRunning) return;
         if(confirm("Excluir este anexo permanentemente?")) {
             await deleteOSAttachment(liveOS.id, attId);
         }
     };
 
     const hasIT = (text: string) => text.toUpperCase().includes("IT_") || text.toUpperCase().includes("INSTRUÇÃO");
+    const getImagesForItem = (idx: number) => (liveOS.imageAttachments || []).filter(img => img.caption === `Item ${idx + 1}`);
 
-    const getImagesForItem = (idx: number) => {
-        if (!liveOS.imageAttachments) return [];
-        return liveOS.imageAttachments.filter(img => img.caption === `Item ${idx + 1}`);
-    };
+    // --- RENDERIZAÇÃO: TELA DE BLOQUEIO ---
+    if (isLockedByOther) {
+        return (
+            <Modal isOpen={true} onClose={onClose} title="Execução Bloqueada">
+                <div className="flex flex-col items-center justify-center p-8 text-center">
+                    <Lock className="w-16 h-16 text-red-500 mb-4" />
+                    <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">OS em andamento</h2>
+                    <p className="text-gray-600 dark:text-gray-300 mt-2">
+                        Esta OS está sendo executada por outra pessoa no momento.
+                    </p>
+                    <button 
+                        onClick={onClose} 
+                        className="mt-6 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-transform transform active:scale-95"
+                    >
+                        Voltar
+                    </button>
+                </div>
+            </Modal>
+        );
+    }
 
+    // --- RENDERIZAÇÃO: TELA PRINCIPAL ---
     return (
-        <Modal isOpen={true} onClose={handleSaveAndClose} title={`Execução: ${liveOS.title}`}>
-            <div className="flex flex-col h-[80vh]">
+        <Modal isOpen={true} onClose={() => { if(!isRunning) onClose(); else alert("Pause a execução antes de sair!"); }} title={`Execução: ${liveOS.title}`}>
+            <div className="flex flex-col h-[85vh]">
                 
-                {/* CABEÇALHO COM CRONÔMETRO (Sem botões de controle) */}
-                <div className="flex flex-col items-center justify-center py-6 bg-gray-900 rounded-lg border border-gray-700 mb-4 shrink-0 relative overflow-hidden shadow-inner">
-                    <div className="absolute top-2 right-2 flex items-center gap-1">
-                        <span className="animate-pulse w-2 h-2 bg-red-500 rounded-full"></span>
-                        <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">Gravando</span>
-                    </div>
-                    
-                    <Clock size={32} className="text-blue-400 mb-2 opacity-80" />
-                    <div className="text-5xl font-mono font-bold text-white tracking-widest tabular-nums drop-shadow-md">
-                        {formatTime(elapsed)}
-                    </div>
-                    <p className="text-xs text-gray-400 mt-2 uppercase tracking-wide">Tempo Total Decorrido</p>
+                {/* 1. Header do Timer / Ação Inicial */}
+                <div className={`${isRunning ? 'bg-gray-900 border-gray-700' : 'bg-gray-100 border-gray-300'} border rounded-lg p-4 mb-4 flex justify-between items-center transition-colors shadow-inner`}>
+                    {!isRunning ? (
+                        <button 
+                            onClick={handleStart}
+                            className="w-full py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold flex items-center justify-center gap-3 shadow-lg text-lg animate-pulse"
+                        >
+                            <Play className="w-6 h-6" />
+                            INICIAR / CONTINUAR EXECUÇÃO
+                        </button>
+                    ) : (
+                        <>
+                            <div className="flex items-center gap-3">
+                                <div className="w-3 h-3 bg-red-500 rounded-full animate-ping"></div>
+                                <div>
+                                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Sessão Atual</p>
+                                    <p className="text-3xl font-mono font-bold text-white">{formatTime(elapsedSession)}</p>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Total Acumulado</p>
+                                <p className="text-xl font-mono text-gray-300">{formatTime((liveOS.executionTimeSeconds || 0) + elapsedSession)}</p>
+                            </div>
+                        </>
+                    )}
                 </div>
 
-                {/* CONTEÚDO COM SCROLL */}
-                <div className="flex-1 overflow-y-auto pr-2 space-y-6 custom-scrollbar">
-                    
-                    {/* CHECKLIST */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
-                        <h4 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase mb-3 border-b border-gray-200 dark:border-gray-700 pb-2 flex items-center gap-2">
-                            <CheckSquare size={16} /> Lista de Verificação
-                        </h4>
-                        <div className="space-y-4">
-                            {checklist.length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">Nenhum item de verificação.</p>}
-                            {checklist.map((item, i) => (
-                                <div key={i} className={`bg-gray-50 dark:bg-gray-700/30 rounded p-3 border transition-colors ${item.done ? 'border-green-500/50 bg-green-50/50 dark:bg-green-900/10' : 'border-gray-200 dark:border-gray-600'}`}>
-                                    <div className="flex items-start justify-between mb-2">
-                                        <div className="flex items-start gap-3 flex-1 cursor-pointer" onClick={() => handleCheck(i)}>
-                                            <div className={`mt-0.5 ${item.done ? 'text-green-600' : 'text-gray-400'}`}>
-                                                {item.done ? <CheckSquare size={20} /> : <Square size={20} />}
-                                            </div>
-                                            <div className={`select-none text-sm ${item.done ? "line-through text-gray-500" : "text-gray-800 dark:text-gray-200"}`}>
-                                                <span className="text-blue-500 font-bold mr-2">{i + 1})</span>
-                                                {item.text}
-                                                {hasIT(item.text) && (
-                                                    <span 
-                                                        className="ml-2 inline-flex items-center gap-1 bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 text-[10px] px-2 py-0.5 rounded cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 border border-blue-200 dark:border-blue-700"
-                                                        onClick={(e) => { e.stopPropagation(); alert("Baixando Instrução de Trabalho..."); }}
-                                                        title="Baixar Procedimento"
-                                                    >
-                                                        📄 Procedimento
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <label className={`cursor-pointer p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors ${isUploading ? 'opacity-50 pointer-events-none' : ''}`} title="Anexar foto ao item">
-                                            <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e, i)} />
-                                            <Camera className="w-5 h-5 text-gray-400 hover:text-blue-500" />
-                                        </label>
-                                    </div>
-                                    
-                                    <textarea 
-                                        className="w-full bg-white dark:bg-gray-900/50 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm text-gray-800 dark:text-gray-300 placeholder-gray-400 focus:border-blue-500 outline-none mb-2 resize-y min-h-[60px]"
-                                        placeholder="Adicionar observação..."
-                                        rows={2}
-                                        value={item.comment || ''}
-                                        onChange={(e) => handleCommentChange(i, e.target.value)}
-                                        onBlur={saveChecklist}
-                                    />
+                {/* 2. Botão Histórico (Toggle) */}
+                <div className="flex justify-end mb-2">
+                    <button 
+                        onClick={() => setShowHistory(!showHistory)}
+                        className="flex items-center gap-1 text-blue-600 hover:underline text-sm font-medium"
+                    >
+                        <History className="w-4 h-4" />
+                        {showHistory ? "Voltar para Checklist" : "Ver Histórico de Execução"}
+                    </button>
+                </div>
 
-                                    {/* FOTOS DO ITEM (CORRIGIDO: Ícone maior e fixo) */}
-                                    {getImagesForItem(i).length > 0 && (
-                                        <div className="flex flex-wrap gap-2 mt-2">
-                                            {getImagesForItem(i).map((img) => (
-                                                <div key={img.id} className="relative group w-16 h-16">
-                                                    <img src={img.url} className="w-full h-full object-cover rounded border border-gray-300 dark:border-gray-600 shadow-sm" />
-                                                    <button 
-                                                        onClick={() => handleDeletePhoto(img.id)}
-                                                        // ✅ Botão de deletar fixo e maior
-                                                        className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1.5 shadow-md z-10"
-                                                        title="Excluir imagem"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </div>
-                                            ))}
+                {/* 3. Área de Conteúdo (Scrollável) */}
+                <div className={`flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar ${!isRunning && !showHistory ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+                    
+                    {showHistory ? (
+                        /* TELA DE HISTÓRICO */
+                        <div className="space-y-3 p-1">
+                            {(!liveOS.executionHistory || liveOS.executionHistory.length === 0) && (
+                                <p className="text-center text-gray-500 py-10 bg-gray-50 rounded border border-dashed">Nenhum histórico registrado.</p>
+                            )}
+                            {/* Reverte array para mostrar mais recente primeiro */}
+                            {[...(liveOS.executionHistory || [])].reverse().map((sess: any, idx: number) => (
+                                <div key={idx} className="bg-white dark:bg-gray-800 border-l-4 border-blue-500 shadow-sm rounded-r p-3">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <span className="font-bold text-gray-800 dark:text-gray-200 block">{sess.userName}</span>
+                                            <span className="text-xs text-gray-500">
+                                                {new Date(sess.startTime).toLocaleTimeString()} - {new Date(sess.endTime).toLocaleTimeString()}
+                                            </span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="block font-mono text-sm font-bold text-blue-600">{formatTime(sess.durationSeconds)}</span>
+                                            <span className="text-[10px] text-gray-400 uppercase">Duração</span>
+                                        </div>
+                                    </div>
+                                    {sess.completedSubtasks && sess.completedSubtasks.length > 0 && (
+                                        <div className="mt-2 bg-green-50 dark:bg-green-900/20 p-2 rounded border border-green-100 dark:border-green-800">
+                                            <p className="text-[10px] font-bold text-green-700 dark:text-green-400 uppercase mb-1 flex items-center gap-1">
+                                                <CheckCircle size={10} /> Concluído nesta sessão:
+                                            </p>
+                                            <ul className="list-disc list-inside text-xs text-gray-600 dark:text-gray-300">
+                                                {sess.completedSubtasks.map((t: string, i: number) => <li key={i}>{t}</li>)}
+                                            </ul>
                                         </div>
                                     )}
                                 </div>
                             ))}
                         </div>
-                    </div>
-
-                    {/* FOTOS GERAIS */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
-                        <h5 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase mb-3 flex justify-between items-center">
-                            <span className="flex items-center gap-2"><Camera size={16} /> Fotos Gerais da OS</span>
-                            {isUploading && <span className="text-blue-500 text-[10px] animate-pulse font-bold">Enviando...</span>}
-                        </h5>
-                        <div className="flex flex-wrap gap-2">
-                            {liveOS.imageAttachments?.filter(img => img.caption === "Foto Geral").map(img => (
-                                <div key={img.id} className="relative group w-20 h-20">
-                                    <img src={img.url} className="w-full h-full object-cover rounded border border-gray-300 dark:border-gray-600 shadow-sm" />
-                                    <button 
-                                        onClick={() => handleDeletePhoto(img.id)}
-                                        // ✅ Botão de deletar fixo e maior (Consistência)
-                                        className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-700 text-white rounded-full p-1.5 shadow-md flex items-center justify-center z-10"
-                                        title="Excluir imagem"
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
+                    ) : (
+                        /* TELA DE CHECKLIST (PADRÃO) */
+                        <>
+                            {/* Lista de Itens */}
+                            <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 shadow-sm">
+                                <h4 className="text-sm font-bold text-gray-500 uppercase mb-3 flex items-center gap-2">
+                                    <CheckSquare size={16} /> Lista de Verificação
+                                </h4>
+                                <div className="space-y-4">
+                                    {subtasks.map((item, i) => (
+                                        <div key={i} className={`bg-gray-50 dark:bg-gray-700/30 rounded p-3 border transition-colors ${item.done ? 'border-green-500/50 bg-green-50/50' : 'border-gray-200'}`}>
+                                            <div className="flex items-start justify-between mb-2">
+                                                <div className="flex items-start gap-3 flex-1 cursor-pointer" onClick={() => handleCheck(i)}>
+                                                    <div className={`mt-0.5 ${item.done ? 'text-green-600' : 'text-gray-400'}`}>
+                                                        {item.done ? <CheckSquare size={20} /> : <Square size={20} />}
+                                                    </div>
+                                                    <div className={`text-sm ${item.done ? "line-through text-gray-500" : "text-gray-800 dark:text-gray-200"}`}>
+                                                        <span className="text-blue-500 font-bold mr-2">{i + 1})</span>
+                                                        {item.text}
+                                                        {hasIT(item.text) && (
+                                                            <span className="ml-2 inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded border border-blue-200">
+                                                                📄 Procedimento
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <label className={`cursor-pointer p-1.5 rounded hover:bg-gray-200 ${isUploading ? 'opacity-50' : ''}`}>
+                                                    <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e, i)} />
+                                                    <Camera className="w-5 h-5 text-gray-400 hover:text-blue-500" />
+                                                </label>
+                                            </div>
+                                            <textarea 
+                                                className="w-full bg-white dark:bg-gray-900 border border-gray-300 rounded p-2 text-sm outline-none resize-y min-h-[60px]"
+                                                placeholder="Observação..."
+                                                value={item.comment || ''}
+                                                onChange={(e) => handleCommentChange(i, e.target.value)}
+                                            />
+                                            {/* Fotos do Item */}
+                                            {getImagesForItem(i).length > 0 && (
+                                                <div className="flex flex-wrap gap-2 mt-2">
+                                                    {getImagesForItem(i).map((img) => (
+                                                        <div key={img.id} className="relative w-16 h-16 group">
+                                                            <img src={img.url} className="w-full h-full object-cover rounded border" />
+                                                            <button onClick={() => handleDeletePhoto(img.id)} className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1 shadow-md z-10">
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
-                            <label className={`w-20 h-20 flex items-center justify-center bg-gray-100 dark:bg-gray-700 rounded border border-gray-300 dark:border-gray-600 border-dashed cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors ${isUploading ? 'opacity-50 cursor-wait' : ''}`}>
-                                <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e)} disabled={isUploading} />
-                                {isUploading ? <UploadCloud className="animate-bounce text-gray-400" /> : <span className="text-2xl text-gray-400">+</span>}
-                            </label>
-                        </div>
+                            </div>
+
+                            {/* Fotos Gerais */}
+                            <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 shadow-sm">
+                                <h5 className="text-sm font-bold text-gray-500 uppercase mb-3 flex items-center gap-2">
+                                    <Camera size={16} /> Fotos Gerais {isUploading && <span className="text-blue-500 animate-pulse">Enviando...</span>}
+                                </h5>
+                                <div className="flex flex-wrap gap-2">
+                                    {(liveOS.imageAttachments || []).filter(img => img.caption === "Foto Geral").map(img => (
+                                        <div key={img.id} className="relative w-20 h-20 group">
+                                            <img src={img.url} className="w-full h-full object-cover rounded border shadow-sm" />
+                                            <button onClick={() => handleDeletePhoto(img.id)} className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1.5 shadow-md">
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <label className={`w-20 h-20 flex items-center justify-center bg-gray-100 rounded border border-dashed cursor-pointer hover:bg-gray-200 ${isUploading ? 'opacity-50' : ''}`}>
+                                        <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e)} disabled={isUploading} />
+                                        <UploadCloud className="text-gray-400" />
+                                    </label>
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                {/* 4. Footer de Ações (Só aparece se estiver rodando e não estiver no histórico) */}
+                {isRunning && !showHistory && (
+                    <div className="mt-4 pt-4 border-t border-gray-200 flex justify-between items-center shrink-0 bg-white dark:bg-gray-800 p-2 gap-3">
+                        <button 
+                            onClick={() => handlePause(false)} 
+                            className="bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-2 text-sm px-4 py-3 rounded-lg font-bold shadow-md transition-colors flex-1 justify-center"
+                        >
+                            <Pause size={18} /> Salvar (Pausar)
+                        </button>
+                        <button 
+                            onClick={() => {
+                                if(subtasks.some(t => !t.done) && !confirm("Há itens pendentes. Finalizar mesmo assim?")) return;
+                                handlePause(true);
+                            }} 
+                            className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2 text-sm px-4 py-3 rounded-lg font-bold shadow-md transition-colors flex-1 justify-center"
+                        >
+                            <CheckCircle size={18} /> Finalizar OS
+                        </button>
                     </div>
-                </div>
-
-                {/* FOOTER */}
-                <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center shrink-0 bg-white dark:bg-gray-800 p-2 gap-3">
-                    
-                    {/* ✅ BOTÃO SALVAR (PAUSAR) DESTACADO */}
-                    <button 
-                        onClick={handleSaveAndClose} 
-                        className="bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-2 text-sm px-4 py-3 rounded-lg font-bold shadow-md transition-colors flex-1 justify-center"
-                    >
-                        <Save size={18} /> 
-                        <span>Salvar (Pausar)</span>
-                    </button>
-
-                    <button 
-                        onClick={handleFinish} 
-                        className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2 text-sm px-4 py-3 rounded-lg font-bold shadow-md transition-colors flex-1 justify-center"
-                    >
-                        <span>✅</span> 
-                        <span>Finalizar OS</span>
-                    </button>
-                </div>
+                )}
             </div>
         </Modal>
     );

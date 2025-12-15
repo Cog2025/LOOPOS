@@ -1,5 +1,6 @@
-// File: types.ts
+// File: src/types.ts
 // Este arquivo centraliza todas as definições de tipos e interfaces TypeScript para garantir consistência e segurança de tipo em toda a aplicação.
+
 // Definições globais de tipos
 
 export enum Role {
@@ -41,7 +42,7 @@ export interface User {
 
 // ✅ ESTRUTURA DE SUBUSINAS
 export interface SubPlant {
-    id: string; // UUID ou ID simples
+    id: string; // UUID ou ID simples (para compatibilidade com legado)
     name: string;
     inverterCount: number;
     trackersPerInverter: number;
@@ -88,6 +89,18 @@ export interface SubtaskItem {
     comment?: string;
 }
 
+// ✅ NOVA INTERFACE ADICIONADA PARA CORRIGIR O ERRO
+// Representa uma sessão de trabalho em uma OS (Início -> Pausa/Fim)
+export interface ExecutionSession {
+    sessionId: string;
+    userId: string;
+    userName: string;
+    startTime: string;
+    endTime: string;
+    durationSeconds: number;
+    completedSubtasks: string[]; // Lista de textos das subtarefas feitas nesta sessão
+}
+
 export interface OS {
     id: string;
     title: string;
@@ -116,6 +129,8 @@ export interface OS {
     // Execução
     executionStart?: string;
     executionTimeSeconds?: number;
+    currentExecutorId?: string | null; // Quem está travando a OS no momento
+    executionHistory?: ExecutionSession[]; // ✅ Histórico detalhado de sessões
     isInReview?: boolean;
     subtasksStatus?: SubtaskItem[]; 
     maintenancePlanId?: string;

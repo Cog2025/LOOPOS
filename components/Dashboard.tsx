@@ -1,146 +1,146 @@
-// File: components/Dashboard.tsx
+// File: src/components/Dashboard.tsx
 import React, { useState, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
-import { ManagementModalConfig } from './modals/ManagementModal';
-import { OS, ViewType } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import ManagementModal, { ManagementModalConfig } from './modals/ManagementModal';
+import { OS, ViewType, Role } from '../types';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import Board from './Board';
 import Calendar from './Calendar';
 import Schedule52Weeks from './Schedule52Weeks';
 import MaintenancePlans from './MaintenancePlans';
+
+// Modais
 import OSDetailModal from './modals/OSDetailModal';
 import OSForm from './modals/OSForm';
-import ManagementModal from './modals/ManagementModal';
 import UserForm from './modals/UserForm';
 import PlantForm from './modals/PlantForm';
 import DownloadModal from './modals/DownloadModal';
 import ScheduleOSModal from './modals/ScheduleOSModal';
 
-interface ModalConfig {
+interface DashboardModalConfig {
   type: 'OS_DETAIL' | 'OS_FORM' | 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM' | 'DOWNLOAD_FILTER' | 'SCHEDULE_RECURRENCE';
   data?: any;
 }
 
 const Dashboard: React.FC = () => {
-  const { osList, plants, users } = useData();
+  const { osList, filterOSForUser } = useData();
+  const { user } = useAuth();
 
-  const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [modalConfig, setModalConfig] = useState<ModalConfig | null>(null);
   const [currentView, setCurrentView] = useState<ViewType>('KANBAN');
+  const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [modalConfig, setModalConfig] = useState<DashboardModalConfig | null>(null);
 
-  // ✅ FUNÇÃO DE NORMALIZAÇÃO
-  const normalizeStr = (str: string | undefined | null) => {
-      if (!str) return '';
-      return str
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .trim();
-  };
-
-  // ✅ SUPER BUSCA
   const filteredOS = useMemo(() => {
-    if (!searchTerm.trim()) return osList;
-    
-    const terms = normalizeStr(searchTerm).split(/\s+/).filter(t => t);
-
-    return osList.filter(os => {
-        // Relacionamentos
-        const plant = plants.find(p => p.id === os.plantId);
-        
-        // Pessoas Diretas
-        const techOS = users.find(u => u.id === os.technicianId);
-        const supervisorOS = users.find(u => u.id === os.supervisorId);
-
-        // Pessoas da Usina
-        const plantCoordinator = users.find(u => u.id === plant?.coordinatorId);
-        
-        const plantSupervisors = (plant?.supervisorIds || []).map(id => users.find(u => u.id === id)?.name).join(' ');
-        const plantTechnicians = (plant?.technicianIds || []).map(id => users.find(u => u.id === id)?.name).join(' ');
-        const plantAssistants = (plant?.assistantIds || []).map(id => users.find(u => u.id === id)?.name).join(' ');
-
-        // Campos Pesquisáveis
-        const searchableFields = [
-            os.title,           
-            os.id,              
-            os.activity,        
-            os.description,     
-            os.status,          
-            os.priority,
-            os.classification1, 
-            os.classification2, 
-            
-            plant?.name,        
-            plant?.client,      
-            
-            techOS?.name,         
-            supervisorOS?.name,   
-            plantCoordinator?.name,
-            plantSupervisors,
-            plantTechnicians,
-            plantAssistants
-        ];
-
-        const fullSearchString = searchableFields.map(normalizeStr).join(' '); 
-        return terms.every(term => fullSearchString.includes(term));
-    });
-  }, [osList, searchTerm, plants, users]);
-
-  const handleCloseModal = () => setModalConfig(null);
-  const handleNewOS = () => setModalConfig({ type: 'OS_FORM' });
-  const handleCardClick = (os: OS) => setModalConfig({ type: 'OS_DETAIL', data: os });
-  const handleOpenDownloadFilter = () => setModalConfig({ type: 'DOWNLOAD_FILTER' });
-  const handleOpenScheduler = () => setModalConfig({ type: 'SCHEDULE_RECURRENCE' });
-
-  const renderModal = () => {
-    if (!modalConfig) return null;
-    switch (modalConfig.type) {
-      case 'OS_DETAIL': 
-        return (
-            <OSDetailModal 
-                isOpen={true} 
-                onClose={handleCloseModal} 
-                os={modalConfig.data} 
-                onEdit={() => setModalConfig({ type: 'OS_FORM', data: modalConfig.data })} 
-            />
-        );
-      case 'OS_FORM': return <OSForm isOpen={true} onClose={handleCloseModal} initialData={modalConfig.data} />;
-      case 'MANAGE_USERS':
-      case 'MANAGE_PLANTS': return <ManagementModal isOpen={true} onClose={handleCloseModal} config={modalConfig as ManagementModalConfig} setModalConfig={(newConfig) => setModalConfig(newConfig ? (newConfig as ModalConfig) : null)} />;
-      case 'USER_FORM': return <UserForm isOpen={true} onClose={() => setModalConfig(modalConfig.data?.parentConfig)} initialData={modalConfig.data?.user} role={modalConfig.data?.role} />;
-      case 'PLANT_FORM': return <PlantForm isOpen={true} onClose={() => setModalConfig(modalConfig.data?.parentConfig)} initialData={modalConfig.data?.plant} presetClient={modalConfig.data?.presetClient} />;
-      case 'DOWNLOAD_FILTER': return <DownloadModal isOpen={true} onClose={handleCloseModal} />;
-      case 'SCHEDULE_RECURRENCE': return <ScheduleOSModal isOpen={true} onClose={handleCloseModal} />;
-      default: return null;
+    let list = filterOSForUser(user!);
+    if (searchTerm) {
+      const lower = searchTerm.toLowerCase();
+      list = list.filter(os => 
+        os.title.toLowerCase().includes(lower) ||
+        os.description.toLowerCase().includes(lower) ||
+        os.id.toLowerCase().includes(lower)
+      );
     }
-  };
+    return list;
+  }, [osList, user, searchTerm, filterOSForUser]);
+
+  const closeModal = () => setModalConfig(null);
 
   return (
-    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100">
       <Sidebar 
         isMobileOpen={isMobileSidebarOpen} 
         setMobileOpen={setMobileSidebarOpen} 
         isCollapsed={isSidebarCollapsed} 
         setIsCollapsed={setSidebarCollapsed} 
-        setModalConfig={setModalConfig} 
+        setModalConfig={setModalConfig as any}
         currentView={currentView} 
         setCurrentView={setCurrentView} 
+        onOpenManagement={() => setModalConfig({ type: 'MANAGE_USERS', data: { roleFilter: null } })} 
       />
+
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header onMenuClick={() => setMobileSidebarOpen(true)} onNewOSClick={handleNewOS} searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+        <Header 
+            searchTerm={searchTerm} 
+            setSearchTerm={setSearchTerm} 
+            onMenuClick={() => setMobileSidebarOpen(true)}
+            toggleSidebar={() => setMobileSidebarOpen(!isMobileSidebarOpen)} 
+            onNewOSClick={() => setModalConfig({ type: 'OS_FORM', data: null })} 
+        />
+
         <main className="flex-1 overflow-x-auto overflow-y-hidden relative">
-          {/* ✅ CORREÇÃO: Passando filteredOS para o Board */}
-          {currentView === 'KANBAN' && (<Board onOpenDownloadFilter={handleOpenDownloadFilter} osList={filteredOS} />)} 
-          {currentView === 'CALENDAR' && <Calendar osList={filteredOS} onCardClick={handleCardClick} />}
-          {currentView === 'SCHEDULE_52_WEEKS' && <Schedule52Weeks osList={filteredOS} onCardClick={handleCardClick} onOpenScheduler={handleOpenScheduler} />}
+          {currentView === 'KANBAN' && (
+            <Board osList={filteredOS} onOpenDownloadFilter={() => setModalConfig({ type: 'DOWNLOAD_FILTER' })} />
+          )} 
+          {currentView === 'CALENDAR' && (
+            <Calendar osList={filteredOS} onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: os })} />
+          )}
+          {currentView === 'SCHEDULE_52_WEEKS' && (
+            <Schedule52Weeks 
+                osList={filteredOS} 
+                onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: os })} 
+                onOpenScheduler={() => setModalConfig({ type: 'SCHEDULE_RECURRENCE' })} 
+            />
+          )}
           {currentView === 'MAINTENANCE_PLANS' && <MaintenancePlans />}
         </main>
       </div>
-      {renderModal()}
+
+      {/* RENDERIZAÇÃO DOS MODAIS */}
+      {modalConfig?.type === 'OS_DETAIL' && (
+        <OSDetailModal isOpen={true} os={modalConfig.data} onClose={closeModal} onEdit={() => setModalConfig({ type: 'OS_FORM', data: modalConfig.data })} />
+      )}
+
+      {modalConfig?.type === 'OS_FORM' && (
+        <OSForm isOpen={true} initialData={modalConfig.data} onClose={closeModal} />
+      )}
+
+      {(modalConfig?.type === 'MANAGE_USERS' || modalConfig?.type === 'MANAGE_PLANTS') && (
+        <ManagementModal
+          isOpen={true}
+          onClose={closeModal}
+          config={modalConfig as unknown as ManagementModalConfig}
+          // ✅ CORREÇÃO AQUI: Captura 'userToEdit' E 'roleToSet'
+          onOpenUserForm={(userToEdit, roleToSet) => setModalConfig({ 
+              type: 'USER_FORM', 
+              data: { 
+                  user: userToEdit, 
+                  role: roleToSet, // Passa o cargo para o UserForm
+                  parentConfig: modalConfig 
+              } 
+          })}
+          onOpenPlantForm={(plantToEdit) => setModalConfig({ 
+              type: 'PLANT_FORM', 
+              data: { plant: plantToEdit, parentConfig: modalConfig } 
+          })}
+        />
+      )}
+
+      {modalConfig?.type === 'USER_FORM' && (
+        <UserForm
+          isOpen={true}
+          user={modalConfig.data?.user}
+          role={modalConfig.data?.role} // ✅ Recebe o cargo aqui
+          onClose={() => modalConfig.data?.parentConfig ? setModalConfig(modalConfig.data.parentConfig) : closeModal()}
+        />
+      )}
+
+      {modalConfig?.type === 'PLANT_FORM' && (
+        <PlantForm
+          isOpen={true}
+          initialData={modalConfig.data?.plant}
+          onClose={() => modalConfig.data?.parentConfig ? setModalConfig(modalConfig.data.parentConfig) : closeModal()}
+        />
+      )}
+
+      {modalConfig?.type === 'DOWNLOAD_FILTER' && <DownloadModal isOpen={true} onClose={closeModal} />}
+      {modalConfig?.type === 'SCHEDULE_RECURRENCE' && <ScheduleOSModal isOpen={true} onClose={closeModal} />}
+
     </div>
   );
 };
+
 export default Dashboard;

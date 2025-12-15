@@ -3,225 +3,177 @@
 // Para usinas, ele delega a listagem ao PlantList e abre o PlantForm com ou sem presetClient.
 // Para usuários, mantém a lista/edição como já existente.
 
-import React, { useRef, useEffect } from 'react';
-import { canViewUser, canEditUser } from '../utils/rbac';
-import Modal from './Modal';
+import React, { useState } from 'react';
+import { X, Plus, Edit, Trash2, Search, Factory, Users } from 'lucide-react';
 import { useData } from '../../contexts/DataContext';
-import { useAuth } from '../../contexts/AuthContext';
-import { User, Plant, Role } from '../../types';
-import UserForm from './UserForm';
-import PlantForm from './PlantForm';
-import Portal from '../Portal';
-import PlantList from '../PlantList'; 
+import { Role } from '../../types';
 
-// ============ TIPO EXPORTADO ============
-export type ManagementModalConfig = {
-  type: 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM';
-  data?: {
-    roles?: Role[];
-    title?: string;
-    user?: User;
-    role?: Role;
-    plant?: Plant;
-    parentConfig?: any;
-    presetClient?: string;
-  };
-};
+export interface ManagementModalConfig {
+  type: string; 
+  data: any; 
+}
 
-// ============ INTERFACE SIMPLIFICADA ============
 interface ManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
-  config: ManagementModalConfig;
-  setModalConfig: (config: ManagementModalConfig | null) => void;
+  config: ManagementModalConfig; 
+  onOpenUserForm: (user?: any, role?: Role) => void; 
+  onOpenPlantForm: (plant?: any) => void;
 }
 
-const ROLE_SINGULAR: Partial<Record<Role, string>> = {
-  [Role.ADMIN]: 'Admin',
-  [Role.COORDINATOR]: 'Coordenador',
-  [Role.SUPERVISOR]: 'Supervisor',
-  [Role.OPERATOR]: 'Operador',
-  [Role.TECHNICIAN]: 'Técnico',
-  [Role.ASSISTANT]: 'Auxiliar',
-  [Role.CLIENT]: 'Cliente', 
-};
+const ManagementModal: React.FC<ManagementModalProps> = ({
+  isOpen,
+  onClose,
+  config,
+  onOpenUserForm,
+  onOpenPlantForm
+}) => {
+  const { users, plants, deleteUser, deletePlant } = useData();
+  const [searchTerm, setSearchTerm] = useState('');
 
-const ManagementModal: React.FC<ManagementModalProps> = ({ isOpen, onClose, config, setModalConfig }) => {
-  const { users, plants, deleteUser } = useData();
-  const { user: currentUser } = useAuth();
+  if (!isOpen) return null;
 
-  // --- ATOR (usuário logado) ---
-  const actor = (currentUser ?? {
-    id: 'anon', name: '—', username: 'anon',
-    role: Role.OPERATOR, plantIds: []
-  } as unknown as User);
+  const isPlants = config.type === 'MANAGE_PLANTS';
+  const roleFilter = config.data?.roleFilter;
+  const roleLabel = config.data?.label || 'Usuários';
 
-  const handleDeleteUser = async (user: User) => {
-    if (actor.role !== Role.ADMIN) {
-      alert('Apenas admins podem deletar');
-      return;
-    }
-    
-    if (!window.confirm(`Deletar ${user.name}?\n\nEsta ação não pode ser desfeita.`)) {
-      return;
-    }
-
-    try {
-      await deleteUser(user.id);
-    } catch (error) {
-      console.error('❌ Erro ao deletar:', error);
-      alert('❌ Erro ao deletar usuário');
-    }
+  // ✅ CORREÇÃO GRAMATICAL: Mapeamento Plural -> Singular
+  const getSingularLabel = (role?: Role): string => {
+      if (!role) return "Usuário";
+      const map: Record<string, string> = {
+          [Role.ADMIN]: "Administrador",
+          [Role.OPERATOR]: "Operador",
+          [Role.COORDINATOR]: "Coordenador",
+          [Role.SUPERVISOR]: "Supervisor",
+          [Role.TECHNICIAN]: "Técnico",
+          [Role.ASSISTANT]: "Auxiliar",
+          [Role.CLIENT]: "Cliente"
+      };
+      return map[role] || "Usuário";
   };
 
-  // --- CONTEXTO RBAC ---
-  const ctx = { me: actor, plants };
+  // Títulos
+  const modalTitle = isPlants ? 'Gerenciar Usinas' : `Gerenciar ${roleLabel}`;
+  const buttonLabel = isPlants ? 'Nova Usina' : `Novo ${getSingularLabel(roleFilter)}`;
 
-  // --- PERMISSÕES ---
-  const canCreatePlant =
-    actor.role === Role.ADMIN ||
-    actor.role === Role.OPERATOR ||
-    actor.role === Role.COORDINATOR ||
-    actor.role === Role.SUPERVISOR;
-
-  // --- ESTADO DO MODAL ---
-  const isManagingUsers = config.type === 'MANAGE_USERS';
-
-  const getSingular = () => {
-    const r = config.data?.roles?.[0];
-    return r ? (ROLE_SINGULAR[r] || 'Usuário') : 'Usuário';
-  };
-
-  const title =
-    config.type === 'USER_FORM'
-      ? (config.data?.user ? `Editar Usuário: ${config.data.user.name}` : `Novo ${getSingular()}`)
-      : config.type === 'PLANT_FORM'
-        ? (config.data?.plant ? `Editar Usina: ${config.data.plant.name}` : 'Nova Usina')
-        : isManagingUsers
-          ? `Gerenciar ${config.data?.title}`
-          : 'Gerenciar Usinas';
-
-  const stableTitleRef = useRef(title);
-  useEffect(() => { stableTitleRef.current = title; }, [config.type, title]);
-
-
-  // dados (MANAGE_USERS)
-  // --- DADOS FILTRADOS ---
-  const items = isManagingUsers
-    ? users.filter(u => {
-        const canView = canViewUser(ctx, u, plants);
-        const matchesRole = !config.data?.roles || config.data.roles.length === 0 || config.data.roles.includes(u.role as Role);
-        return canView && matchesRole;
-      })
-    : [];
-
-  const canCreateUserRole = (role?: Role) =>
-    !!role && canEditUser(ctx, { id: 'tmp', name: '', username: 'tmp', phone: '', role } as User, ctx.plants);
-
-  const handleAddItem = () => {
-    if (isManagingUsers) {
-      setModalConfig({ type: 'USER_FORM', data: { role: config.data?.roles?.[0], parentConfig: config } });
-    } else {
-      if (!canCreatePlant) return;
-      setModalConfig({ type: 'PLANT_FORM', data: { parentConfig: config } });
-    }
-  };
-
-  const handleEditItem = (item: User | Plant) => {
-    if (isManagingUsers) {
-      setModalConfig({ type: 'USER_FORM', data: { user: item as User, parentConfig: config } });
-    } else {
-      setModalConfig({ type: 'PLANT_FORM', data: { plant: item as Plant, parentConfig: config } });
-    }
-  };
-
-  const renderUserRow = (user: User) => (
-    <div key={user.id} className="flex items-center justify-between p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md">
-      <div>
-        <p className="font-semibold">{user.name}</p>
-        <p className="text-sm text-gray-500">{user.email}</p>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={() => handleEditItem(user)}
-          className="btn-secondary text-sm"
-          disabled={!canEditUser(ctx, user, ctx.plants)}
-        >
-          Editar
-        </button>
+  const filteredList = isPlants
+    ? plants.filter(p => 
+        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        p.client.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : users.filter(u => {
+        const matchesSearch = 
+          u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          u.username.toLowerCase().includes(searchTerm.toLowerCase());
         
-        {actor.role === Role.ADMIN && (
-          <button
-            onClick={() => handleDeleteUser(user)}
-            className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm"
-            title="Deletar usuário"
-          >
-            🗑️
+        const matchesRole = roleFilter ? u.role === roleFilter : true;
+        return matchesSearch && matchesRole;
+      });
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Tem certeza que deseja excluir este item?')) {
+      if (isPlants) {
+        await deletePlant(id);
+      } else {
+        await deleteUser(id);
+      }
+    }
+  };
+
+  const handleNewItem = () => {
+    if (isPlants) {
+        onOpenPlantForm();
+    } else {
+        // ✅ PASSA O ROLE FILTER PARA PRÉ-SELECIONAR
+        onOpenUserForm(undefined, roleFilter); 
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        
+        {/* Header */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              {isPlants ? <Factory className="text-blue-600" /> : <Users className="text-blue-600" />}
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{modalTitle}</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {isPlants ? 'Gerencie as usinas cadastradas no sistema' : `Gerencie os usuários do tipo ${roleLabel}`}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+            <X size={20} className="text-gray-500" />
           </button>
-        )}
+        </div>
+
+        {/* Toolbar */}
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row gap-4 justify-between">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+            <input
+              type="text"
+              placeholder={isPlants ? "Buscar usina..." : "Buscar usuário..."}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+            />
+          </div>
+          <button
+            onClick={handleNewItem}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium"
+          >
+            <Plus size={20} />
+            {buttonLabel}
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="grid gap-4">
+            {filteredList.length === 0 ? (
+              <div className="text-center py-12 text-gray-500 dark:text-gray-400">Nenhum item encontrado.</div>
+            ) : (
+              filteredList.map((item: any) => (
+                <div key={item.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-500/50 transition-colors group">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 flex items-center justify-center text-lg font-bold text-blue-600 shadow-sm">
+                      {item.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900 dark:text-white">{item.name}</h3>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                        {isPlants ? (
+                          <>
+                            <span>{item.client}</span>
+                            <span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                            <span>{item.assets?.length || 0} ativos</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>{item.role}</span>
+                            {item.username && <><span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-gray-600" /><span>@{item.username}</span></>}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => isPlants ? onOpenPlantForm(item) : onOpenUserForm(item, item.role)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors" title="Editar"><Edit size={18} /></button>
+                    <button onClick={() => handleDelete(item.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors" title="Excluir"><Trash2 size={18} /></button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={stableTitleRef.current}
-      footer={
-        (config.type === 'MANAGE_USERS' || config.type === 'MANAGE_PLANTS') && (
-          <button
-            onClick={handleAddItem}
-            className="btn-primary"
-            disabled={isManagingUsers ? !canCreateUserRole(config.data?.roles?.[0]) : !canCreatePlant}
-          >
-            {isManagingUsers ? `Novo ${getSingular()}` : 'Nova Usina'}
-          </button>
-        )
-      }
-    >
-      <>
-        {config.type === 'MANAGE_PLANTS' && (
-          <div className="space-y-4">
-            <PlantList
-              onEdit={(plant) => handleEditItem(plant)}
-              onCreateForClient={(clientName) => {
-                if (!canCreatePlant) return;
-                setModalConfig({ type: 'PLANT_FORM', data: { parentConfig: config, presetClient: clientName } });
-              }}
-            />
-          </div>
-        )}
-
-        {config.type === 'MANAGE_USERS' && (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {items.length > 0 ? items.map(item => renderUserRow(item as User)) : (
-              <p className="text-center text-gray-500 p-4">Nenhum item encontrado.</p>
-            )}
-          </div>
-        )}
-
-        <Portal>{/* Forms via Portal ficam aqui */}
-          {config.type === 'USER_FORM' && (
-            <UserForm
-              isOpen
-              onClose={() => setModalConfig(config.data?.parentConfig)}
-              initialData={config.data?.user}
-              role={config.data?.role}
-            />
-          )}
-          {config.type === 'PLANT_FORM' && (
-            <PlantForm
-              isOpen
-              onClose={() => setModalConfig(config.data?.parentConfig)}
-              initialData={config.data?.plant}
-              presetClient={config.data?.presetClient}
-            />
-          )}
-        </Portal>
-      </>
-    </Modal>
-  );
 };
 
-export default React.memo(ManagementModal);
+export default ManagementModal;

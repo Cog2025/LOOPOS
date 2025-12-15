@@ -109,9 +109,7 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
   const [selectedPlanTask, setSelectedPlanTask] = useState('');
   const [specificComponents, setSpecificComponents] = useState<string[]>([]);
   
-  // Classes CSS reutilizáveis com suporte a Dark Mode
   const inputClasses = "w-full p-2 border border-gray-400 rounded bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none";
-  // ✅ CORREÇÃO: Texto cinza escuro no light, cinza claro no dark
   const labelClass = "block text-sm font-bold mb-1 text-gray-800 dark:text-gray-200";
 
   useEffect(() => {
@@ -132,8 +130,21 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
 
   useEffect(() => { if (formData.plantId) fetchPlantPlan(formData.plantId); }, [formData.plantId]);
 
-  // --- MEMOS E FILTROS ---
-  const availablePlants = useMemo(() => plants.sort((a,b) => a.name.localeCompare(b.name)), [plants]);
+  // --- MEMOS E FILTROS CORRIGIDOS ---
+  // Aqui unimos a ordenação E o filtro de permissões num único lugar
+  const availablePlants = useMemo(() => {
+      // 1. Filtrar conforme permissão
+      const filtered = plants.filter(plant => {
+          if (!user) return false;
+          // Admin e Operador veem todas
+          if ([Role.ADMIN, Role.OPERATOR].includes(user.role)) return true;
+          // Outros (Supervisor/Coord) veem apenas as vinculadas
+          return user.plantIds?.includes(plant.id);
+      });
+      // 2. Ordenar alfabeticamente
+      return filtered.sort((a,b) => a.name.localeCompare(b.name));
+  }, [plants, user]);
+
   const currentPlant = useMemo(() => plants.find(p => p.id === formData.plantId), [plants, formData.plantId]);
   
   const allPlantTasks = useMemo(() => maintenancePlans[formData.plantId] || [], [maintenancePlans, formData.plantId]);
@@ -339,9 +350,21 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
                 </div>
                 <div><label className={labelClass}>Descrição</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className={`${inputClasses} h-24`} /></div>
             </div>
+            
             <div className="pt-4 border-t mt-auto flex justify-end gap-2 bg-white dark:bg-gray-800 shrink-0">
-                <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
-                <button type="submit" className="btn-primary">Salvar OS</button>
+                <button 
+                    type="button" 
+                    onClick={onClose} 
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 rounded-lg font-bold transition-colors"
+                >
+                    Cancelar
+                </button>
+                <button 
+                    type="submit" 
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-transform transform active:scale-95"
+                >
+                    Salvar OS
+                </button>
             </div>
         </form>
     </Modal>

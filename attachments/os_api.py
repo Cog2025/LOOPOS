@@ -1,11 +1,13 @@
 # File: attachments/os_api.py
 from fastapi import APIRouter, HTTPException, Depends, Body, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from app.core.database import get_db
 from app.core import models
+from datetime import datetime
+from uuid import uuid4
 import base64
 import os
 import shutil
@@ -24,24 +26,39 @@ class OSModel(BaseModel):
     startDate: str
     endDate: Optional[str] = None
     activity: str
+    
+    # Campos que são listas (podem vir null do banco legado)
     assets: List[str] = []
+    logs: List[Dict[str, Any]] = []
+    imageAttachments: List[Dict[str, Any]] = []
+    subtasksStatus: List[Dict[str, Any]] = [] 
+    executionHistory: List[Dict[str, Any]] = []
+
     attachmentsEnabled: bool = True
     createdAt: str
     updatedAt: str
-    logs: List[Dict[str, Any]] = []
-    imageAttachments: List[Dict[str, Any]] = []
     
+    # Execução e Trava
     executionStart: Optional[str] = None
     executionTimeSeconds: int = 0
     isInReview: bool = False
-    subtasksStatus: List[Dict[str, Any]] = [] 
     
+    # Novos campos de Controle
+    currentExecutorId: Optional[str] = None
+
+    # Detalhes
     subPlantId: Optional[str] = None
     inverterId: Optional[str] = None
     classification1: Optional[str] = None
     classification2: Optional[str] = None
     estimatedDuration: Optional[int] = 0
     plannedDowntime: Optional[int] = 0
+
+    # ✅ VALIDADOR CRÍTICO: Transforma NULL em [] para evitar erro 500
+    @field_validator('assets', 'logs', 'imageAttachments', 'subtasksStatus', 'executionHistory', mode='before')
+    @classmethod
+    def none_to_list(cls, v):
+        return v or []
 
     class Config:
         from_attributes = True
@@ -66,7 +83,6 @@ def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[D
 
     for att in attachments:
         url = att.get("url", "")
-        
         # Se for imagem nova (Base64)
         if url and url.startswith("data:image"):
             try:
@@ -91,15 +107,12 @@ def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[D
         processed.append(att)
     return processed
 
-# ✅ NOVA FUNÇÃO: DELETAR ARQUIVOS REMOVIDOS
 def cleanup_deleted_files(os_id: str, old_attachments: List[Dict], new_attachments: List[Dict]):
     try:
         target_dir = get_images_dir(os_id)
         if not os.path.exists(target_dir):
             return
 
-        # Cria lista dos nomes de arquivos que DEVEM ficar
-        # Extrai o nome do arquivo da URL (ex: /attachments/images/OS003/foto.jpg -> foto.jpg)
         kept_files = set()
         for att in new_attachments:
             url = att.get("url", "")
@@ -107,7 +120,6 @@ def cleanup_deleted_files(os_id: str, old_attachments: List[Dict], new_attachmen
                 filename = url.split('/')[-1]
                 kept_files.add(filename)
 
-        # Verifica arquivos físicos na pasta
         physical_files = os.listdir(target_dir)
         
         for filename in physical_files:
@@ -122,32 +134,43 @@ def cleanup_deleted_files(os_id: str, old_attachments: List[Dict], new_attachmen
     except Exception as e:
         print(f"❌ Erro na limpeza de arquivos: {e}")
 
+# --- 🔐 LÓGICA DE PERMISSÃO ---
+def verify_creation_permission(user: models.User, plant_id: str):
+    """
+    Verifica se o usuário pode criar OS.
+    """
+    ALLOWED_ROLES = ["Admin", "Operador", "Supervisor", "Coordenador"]
+    
+    if user.role not in ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Acesso Negado: O perfil '{user.role}' não tem permissão para criar Ordens de Serviço."
+        )
+
+    GLOBAL_ACCESS_ROLES = ["Admin", "Operador"]
+    
+    if user.role not in GLOBAL_ACCESS_ROLES:
+        user_plants = user.plantIds or []
+        if plant_id not in user_plants:
+            raise HTTPException(
+                status_code=403, 
+                detail="Acesso Negado: Você não é responsável por esta usina."
+            )
+    return True
+
 # --- ROTAS ---
 
 @router.get("", response_model=List[OSModel])
 def list_os(x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    """
-    Lista OSs.
-    CORREÇÃO DE SEGURANÇA: Se x_user_id for fornecido, aplica filtro de visibilidade:
-    - Admin/Operador: Vê tudo.
-    - Outros (Clientes, Técnicos): Vê apenas OSs de usinas vinculadas (plantIds).
-    """
     query = db.query(models.OS)
-    
     if x_user_id:
         user = db.query(models.User).filter(models.User.id == x_user_id).first()
         if user:
-            # Se for Admin ou Operador, vê tudo.
             if user.role not in ["Admin", "Operador"]:
-                # Filtra OSs cujas plantId estejam na lista de plantIds do usuário
                 user_plant_ids = user.plantIds or []
-                
                 if not user_plant_ids:
-                    return [] # Se não tem usina vinculada, não vê nada
-                
-                # Aplica o filtro IN
+                    return []
                 query = query.filter(models.OS.plantId.in_(user_plant_ids))
-    
     return query.all()
 
 def _get_next_id(db: Session) -> str:
@@ -160,7 +183,13 @@ def _get_next_id(db: Session) -> str:
     return f"OS{str(next_num).zfill(4)}"
 
 @router.post("", response_model=OSModel)
-def create_os(payload: OSModel, db: Session = Depends(get_db)):
+def create_os(payload: OSModel, x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    if not x_user_id: raise HTTPException(status_code=401, detail="Usuário não identificado.")
+    user = db.query(models.User).filter(models.User.id == x_user_id).first()
+    if not user: raise HTTPException(status_code=401, detail="Usuário não encontrado.")
+
+    verify_creation_permission(user, payload.plantId)
+
     if not payload.id or db.query(models.OS).filter(models.OS.id == payload.id).first():
         payload.id = _get_next_id(db)
         if " - " not in payload.title:
@@ -173,7 +202,14 @@ def create_os(payload: OSModel, db: Session = Depends(get_db)):
     return db_os
 
 @router.post("/batch", response_model=List[OSModel])
-def create_os_batch(payloads: List[OSModel], db: Session = Depends(get_db)):
+def create_os_batch(payloads: List[OSModel], x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    if not x_user_id: raise HTTPException(status_code=401, detail="Usuário não identificado.")
+    user = db.query(models.User).filter(models.User.id == x_user_id).first()
+    if not user: raise HTTPException(status_code=401, detail="Usuário não encontrado.")
+
+    for p in payloads:
+        verify_creation_permission(user, p.plantId)
+
     last_os = db.query(models.OS).filter(models.OS.id.like("OS%")).order_by(models.OS.id.desc()).first()
     next_num = 1
     if last_os:
@@ -195,22 +231,114 @@ def create_os_batch(payloads: List[OSModel], db: Session = Depends(get_db)):
     for c in created: db.refresh(c)
     return created
 
+# ✅ ROTA: INICIAR EXECUÇÃO (TRAVA)
+@router.post("/{os_id}/start")
+def start_execution(os_id: str, x_user_id: str = Header(...), db: Session = Depends(get_db)):
+    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
+    if not db_os: raise HTTPException(404, "OS não encontrada")
+    
+    user = db.query(models.User).filter(models.User.id == x_user_id).first()
+    if not user: raise HTTPException(401, "Usuário não encontrado")
+
+    # Verifica Trava
+    if db_os.currentExecutorId and db_os.currentExecutorId != x_user_id:
+        executor = db.query(models.User).filter(models.User.id == db_os.currentExecutorId).first()
+        name = executor.name if executor else "Outro usuário"
+        raise HTTPException(status_code=409, detail=f"Bloqueado: Esta OS está sendo executada por {name}.")
+
+    # Inicia
+    now = datetime.utcnow().isoformat()
+    db_os.currentExecutorId = x_user_id
+    db_os.executionStart = now
+    db_os.status = "Em Progresso"
+    
+    db.commit()
+    db.refresh(db_os)
+    return db_os
+
+# ✅ ROTA: PAUSAR/FINALIZAR (DESTRAVA E LOGA)
+@router.post("/{os_id}/pause")
+def pause_execution(
+    os_id: str, 
+    payload: dict = Body(...), # { subtasksStatus: [], finished: bool }
+    x_user_id: str = Header(...), 
+    db: Session = Depends(get_db)
+):
+    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
+    if not db_os: raise HTTPException(404, "OS não encontrada")
+    
+    user = db.query(models.User).filter(models.User.id == x_user_id).first()
+    
+    # Cálculo do Tempo
+    now_dt = datetime.utcnow()
+    duration = 0
+    if db_os.executionStart:
+        try:
+            start_dt = datetime.fromisoformat(db_os.executionStart)
+            duration = int((now_dt - start_dt).total_seconds())
+        except: duration = 0
+    
+    # Identificar subtarefas concluídas NESTA sessão
+    new_subtasks = payload.get("subtasksStatus", [])
+    completed_now = []
+    
+    # Mapa das antigas
+    old_subtasks = db_os.subtasksStatus or []
+    if not isinstance(old_subtasks, list): old_subtasks = []
+    
+    old_map = {st.get('id'): st.get('done', False) for st in old_subtasks if isinstance(st, dict)}
+    
+    for st in new_subtasks:
+        st_id = st.get('id')
+        is_done = st.get('done', False)
+        was_done = old_map.get(st_id, False)
+        if is_done and not was_done:
+            completed_now.append(st.get('text', f"Item {st_id}"))
+
+    # Criar Log Histórico
+    session_log = {
+        "sessionId": str(uuid4()),
+        "userId": x_user_id,
+        "userName": user.name if user else "Desconhecido",
+        "startTime": db_os.executionStart or now_dt.isoformat(),
+        "endTime": now_dt.isoformat(),
+        "durationSeconds": duration,
+        "completedSubtasks": completed_now
+    }
+    
+    # Atualiza OS
+    current_history = list(db_os.executionHistory or [])
+    if not isinstance(current_history, list): current_history = []
+    current_history.append(session_log)
+    db_os.executionHistory = current_history
+    
+    db_os.executionTimeSeconds = (db_os.executionTimeSeconds or 0) + duration
+    db_os.subtasksStatus = new_subtasks
+    db_os.currentExecutorId = None # Destrava
+    db_os.executionStart = None
+    db_os.updatedAt = now_dt.isoformat()
+
+    # Se foi finalização
+    if payload.get("finished"):
+        db_os.status = "Em Revisão"
+        db_os.endDate = now_dt.isoformat()
+    
+    db.commit()
+    db.refresh(db_os)
+    return db_os
+
 @router.put("/{os_id}", response_model=OSModel)
 def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db)):
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os:
-        raise HTTPException(404, "OS not found")
+    if not db_os: raise HTTPException(404, "OS not found")
     
-    # 1. Processar Imagens (Salvar Novas)
     if payload.imageAttachments is not None:
         old_attachments = db_os.imageAttachments or []
         final_attachments = process_attachments(os_id, payload.imageAttachments)
         cleanup_deleted_files(os_id, old_attachments, final_attachments)
         db_os.imageAttachments = final_attachments
 
-    # 2. Atualizar outros campos
     update_data = payload.dict(exclude={'imageAttachments'}, exclude_unset=True)
-    
     for key, value in update_data.items():
         setattr(db_os, key, value)
     
@@ -230,16 +358,11 @@ def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db)):
 @router.delete("/{os_id}")
 def delete_os(os_id: str, db: Session = Depends(get_db)):
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os:
-        raise HTTPException(404, "OS not found")
-    
+    if not db_os: raise HTTPException(404, "OS not found")
     try:
         target_dir = get_images_dir(os_id)
-        if os.path.exists(target_dir):
-            shutil.rmtree(target_dir)
-            print(f"🗑️ [DELETADO] Pasta da OS: {target_dir}")
+        if os.path.exists(target_dir): shutil.rmtree(target_dir)
     except: pass
-
     db.delete(db_os)
     db.commit()
     return {"ok": True}

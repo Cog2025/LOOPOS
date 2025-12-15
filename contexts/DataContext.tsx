@@ -1,13 +1,13 @@
-// File: contexts/DataContext.tsx
+// File: src/contexts/DataContext.tsx
 // Contexto global para gerenciamento de estado da aplicação.
 // Inclui correções críticas para persistência de imagens e execução de OS.
 // Contexto global corrigido para evitar CRASH por limite de LocalStorage (QuotaExceeded).
 
-
+// File: src/contexts/DataContext.tsx
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { OS, User, Plant, Notification, OSLog, ImageAttachment, Role, TaskTemplate, PlantMaintenancePlan } from '../types';
 
-const API_BASE = ''; // Vazio para usar o proxy do Vite/Cloudflare
+const API_BASE = ''; 
 
 interface AssignmentsDTO {
   coordinatorId: string | null;
@@ -35,6 +35,7 @@ interface DataContextType {
 
   addPlant: (plant: Omit<Plant, 'id'>, assignments?: AssignmentsDTO) => Promise<Plant>;
   updatePlant: (plant: Plant, assignments?: AssignmentsDTO) => Promise<void>;
+  deletePlant: (id: string) => Promise<void>;
 
   addOS: (osData: Omit<OS, 'id' | 'title' | 'createdAt' | 'updatedAt' | 'logs' | 'imageAttachments'>) => Promise<void>;
   addOSBatch: (osDataList: any[]) => Promise<void>;
@@ -52,6 +53,7 @@ interface DataContextType {
   fetchTaskTemplates: (category?: string) => Promise<void>;
   fetchPlantPlan: (plantId: string) => Promise<PlantMaintenancePlan[]>;
   initializePlantPlan: (plantId: string, mode: string, customTasks?: any[]) => Promise<void>;
+  
   updatePlantTask: (taskId: string, data: Partial<PlantMaintenancePlan>) => Promise<void>;
   createPlantTask: (plantId: string, data: any) => Promise<void>;
   deletePlantTask: (taskId: string) => Promise<void>;
@@ -63,7 +65,6 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
-// 🔥 HOOK BLINDADO CONTRA QUOTA EXCEEDED 🔥
 const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
@@ -148,7 +149,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const O = toArray(o);
         const N = toArray(n); 
 
-        console.log('✅ [DataContext] Dados recarregados da API');
         if (U.length) setUsers(U);
         if (P.length) setPlants(P);
         if (O.length) setOsList(O);
@@ -157,7 +157,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (err) { console.error('❌ Erro em reloadFromAPI:', err); }
   }, [api, setUsers, setPlants, setOsList]);
 
-  // --- Funções de Manutenção ---
+  // --- MANUTENÇÃO ---
   const fetchTaskTemplates = async (category?: string) => {
       let url = '/api/maintenance/templates';
       if (category) url += `?asset_category=${encodeURIComponent(category)}`;
@@ -178,7 +178,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const initializePlantPlan = async (plantId: string, mode: string, customTasks: any[] = []) => {
-      await api(`/api/maintenance/plans/${plantId}/initialize`, { 
+      await api(`/api/maintenance/plant-plans/${plantId}/init`, { 
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mode, custom_tasks: customTasks })
       });
@@ -186,46 +186,45 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await reloadFromAPI(); 
   };
 
+  // ✅ CORREÇÃO: Usar a rota /plant-plans/ (não /plans/) para tarefas de usina
   const updatePlantTask = async (taskId: string, data: Partial<PlantMaintenancePlan>) => {
-      await api(`/api/maintenance/plans/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   };
+  
   const createPlantTask = async (plantId: string, data: any) => {
-      await api(`/api/maintenance/plans/${plantId}/task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      await api(`/api/maintenance/plant-plans/${plantId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
       await fetchPlantPlan(plantId);
   };
-  const deletePlantTask = async (taskId: string) => { await api(`/api/maintenance/plans/${taskId}`, { method: 'DELETE' }); };
   
+  // ✅ CORREÇÃO CRÍTICA: Rota alterada para resolver erro 405
+  const deletePlantTask = async (taskId: string) => { 
+      const res = await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'DELETE' }); 
+      if (!res.ok) throw new Error("Falha ao deletar tarefa.");
+  };
+  
+  // Templates (Biblioteca Padrão)
   const addTemplate = async (data: any) => { await api('/api/maintenance/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const updateTemplate = async (id: string, data: any) => { await api(`/api/maintenance/templates/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const deleteTemplate = async (id: string) => { await api(`/api/maintenance/templates/${id}`, { method: 'DELETE' }); await fetchTaskTemplates(); };
 
-  // ✅ FILTRO DE PERMISSÕES (RBAC) BLINDADO
+  // --- FILTROS DE PERMISSÃO ---
   const filterOSForUser = (u: User): OS[] => {
     if (u.role === Role.ADMIN || u.role === Role.OPERATOR) return osList;
     if (u.role === Role.TECHNICIAN) return osList.filter(o => o.technicianId === u.id);
-    
-    // Se for Cliente, Coord ou Sup, verifica IDs vinculados E correspondência de nome
     if (u.role === Role.CLIENT || u.role === Role.COORDINATOR || u.role === Role.SUPERVISOR) {
         const normalizedUserName = u.name.trim().toLowerCase();
-        
         return osList.filter(o => {
             const plant = plants.find(p => p.id === o.plantId);
             if (!plant) return false;
-
-            // 1. Verifica vínculo direto por ID (Checkbox)
             const idMatch = u.plantIds && u.plantIds.includes(plant.id);
-            
-            // 2. Verifica vínculo por Nome do Cliente (String)
-            // Útil para Clientes que não foram editados manualmente ainda
             const nameMatch = u.role === Role.CLIENT && plant.client && plant.client.trim().toLowerCase() === normalizedUserName;
-
             return idMatch || nameMatch;
         });
     }
-
     return [];
   };
 
+  // --- CRUD GERAL ---
   const addUser = async (u: Omit<User, 'id'>) => {
     const res = await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(u) });
     if (!res.ok) throw new Error('Erro ao criar usuário');
@@ -256,6 +255,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!res.ok) throw new Error();
       const saved = await res.json();
       setPlants(prev => prev.map(p => (p.id === saved.id ? normalizePlant(saved) : p)));
+  };
+  const deletePlant = async (id: string) => {
+      try {
+        await api(`/api/plants/${id}`, { method: 'DELETE' });
+        setPlants(prev => prev.filter(p => p.id !== id));
+      } catch (e) {
+        console.error("Erro ao deletar usina:", e);
+      }
   };
 
   const addOS = async (osData: Omit<OS, 'id'|'title'|'createdAt'|'updatedAt'|'logs'|'imageAttachments'>) => {
@@ -311,47 +318,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setOsList(prev => prev.map(os => (os.id === osId ? { ...os, logs: [newLog, ...os.logs] } : os)));
   };
 
-  // ✅ ADD ATTACHMENT: SEGURO (Sem Race Condition)
   const addOSAttachment = async (osId: string, att: Omit<ImageAttachment, 'id'|'uploadedAt'>) => {
     const newAtt = { ...att, id: `img-${Date.now()}`, uploadedAt: new Date().toISOString() };
-    
-    // NOTA: Não atualizamos o estado local manualmente aqui para evitar conflitos.
-    // Confiamos na resposta do servidor que retorna o objeto completo atualizado.
-
     try {
-        // 1. Busca dados frescos
         const freshList = await api('/api/os').then(r => r.json());
         const currentOS = freshList.find((o: OS) => o.id === osId);
         
         if (currentOS) {
-            // 2. Adiciona o novo anexo à lista existente no servidor
             const updatedAttachments = [newAtt, ...(currentOS.imageAttachments || [])];
-            
-            const payload = { 
-                ...currentOS, 
-                imageAttachments: updatedAttachments, 
-                updatedAt: new Date().toISOString() 
-            };
-            
-            // 3. Salva
-            const res = await api(`/api/os/${osId}`, { 
-                method: 'PUT', 
-                headers: { 'Content-Type': 'application/json' }, 
-                body: JSON.stringify(payload) 
-            });
+            const payload = { ...currentOS, imageAttachments: updatedAttachments, updatedAt: new Date().toISOString() };
+            const res = await api(`/api/os/${osId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             if(res.ok) {
                 const savedOS = await res.json();
                 console.log("✅ Imagem salva e sincronizada:", savedOS.id);
-                // 4. Atualiza estado global com a fonte da verdade
                 setOsList(prev => prev.map(os => (os.id === osId ? savedOS : os)));
-            } else {
-                console.error("❌ Erro servidor ao salvar imagem.");
             }
         }
-    } catch (e) { 
-        console.error("Erro crítico upload:", e); 
-    }
+    } catch (e) { console.error("Erro crítico upload:", e); }
   };
 
   const deleteOSAttachment = async (osId: string, attId: string) => {
@@ -370,13 +354,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setOsList(prev => prev.filter(os => !ids.includes(os.id)));
   };
 
-  const markNotificationAsRead = async (id: string) => { /* ... */ };
+  const markNotificationAsRead = async (id: string) => { 
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+      try { await api(`/api/notifications/${id}/read`, { method: 'PUT' }); } catch (e) { console.error(e); }
+  };
 
   return (
     <DataContext.Provider value={{
       users, plants, osList, notifications, taskTemplates, maintenancePlans,
       setAuthHeaders, reloadFromAPI, loadUserData, clearData,
-      addUser, updateUser, deleteUser, addPlant, updatePlant,
+      addUser, updateUser, deleteUser, addPlant, updatePlant, deletePlant,
       addOS, addOSBatch, updateOS, patchOS, deleteOSBatch,
       addOSLog, addOSAttachment, deleteOSAttachment,
       filterOSForUser, markNotificationAsRead,
@@ -393,4 +380,5 @@ export const useData = () => {
   if (!ctx) throw new Error('useData must be used within a DataProvider');
   return ctx;
 };
-export default useData;
+
+export default DataContext;

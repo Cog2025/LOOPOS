@@ -1,9 +1,10 @@
-// File: components/modals/StandardLibraryModal.tsx
+// File: src/components/modals/StandardLibraryModal.tsx
 import React, { useEffect, useState, useMemo } from 'react';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
 import { TaskTemplate } from '../../types';
-import { STANDARD_ASSETS } from '../../constants';
+// Supondo que STANDARD_ASSETS esteja definido em algum lugar, senão defino um fallback
+const STANDARD_ASSETS = ["Inversores", "Transformadores", "Ar Condicionado", "Estruturas", "Monitoramento", "Limpeza", "Jardinagem", "Cercamento", "Drenagem", "Vias de Acesso", "Edificações"];
 
 interface Props {
     isOpen: boolean;
@@ -39,7 +40,7 @@ const StandardLibraryModal: React.FC<Props> = ({ isOpen, onClose }) => {
         return Array.from(combined).sort();
     }, [taskTemplates]);
 
-    // ✅ CORREÇÃO: Inicializa grupos mesmo sem tarefas
+    // ✅ Lógica de Agrupamento Original Mantida
     const groupedTasks = useMemo(() => {
         const groups: Record<string, TaskTemplate[]> = {};
         
@@ -76,18 +77,33 @@ const StandardLibraryModal: React.FC<Props> = ({ isOpen, onClose }) => {
         });
     };
 
+    // ✅ CORREÇÃO CRÍTICA DO ERRO 422: Conversão de Tipos
     const handleSave = async () => {
         const payload = { 
             ...editingItem, 
-            plan_code: 'LOOP-STD',
-            frequency_days: Number(editingItem.frequency_days || 0),
-            estimated_duration_minutes: Number(editingItem.estimated_duration_minutes || 0)
+            plan_code: editingItem.plan_code || `STD-${Date.now()}`, // Garante código
+            // Converte explicitamente para número para evitar "422 Unprocessable Content"
+            frequency_days: parseInt(String(editingItem.frequency_days || 0), 10),
+            estimated_duration_minutes: parseInt(String(editingItem.estimated_duration_minutes || 0), 10),
+            // Garante campos obrigatórios
+            asset_category: editingItem.asset_category || 'Geral',
+            title: editingItem.title || 'Nova Tarefa',
+            task_type: editingItem.task_type || 'Preventiva',
+            criticality: editingItem.criticality || 'Média',
+            subtasks: editingItem.subtasks || []
         };
-        if (payload.id) await updateTemplate(payload.id, payload);
-        else await addTemplate(payload);
-        setIsEditing(false);
-        setEditingItem({});
-        fetchTaskTemplates();
+
+        try {
+            if (payload.id) await updateTemplate(payload.id, payload);
+            else await addTemplate(payload);
+            
+            setIsEditing(false);
+            setEditingItem({});
+            fetchTaskTemplates();
+        } catch (error) {
+            console.error("Erro ao salvar:", error);
+            alert("Erro ao salvar o padrão.");
+        }
     };
 
     const handleDelete = async (id: string) => {
@@ -153,8 +169,8 @@ const StandardLibraryModal: React.FC<Props> = ({ isOpen, onClose }) => {
                         </div>
                     </div>
                     <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button onClick={() => setIsEditing(false)} className="btn-secondary">Cancelar</button>
-                        <button onClick={handleSave} className="btn-primary">Salvar Padrão</button>
+                        <button onClick={() => setIsEditing(false)} className="px-4 py-2 bg-gray-200 rounded text-gray-700 hover:bg-gray-300">Cancelar</button>
+                        <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold">Salvar Padrão</button>
                     </div>
                 </div>
             </Modal>
@@ -174,7 +190,7 @@ const StandardLibraryModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     <div className="flex-[2] min-w-[200px]">
                         <input className={inputClass} style={{...inputStyle, width: '100%'}} placeholder="Buscar por título..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                     </div>
-                    <button onClick={handleNewAssetGroup} className="btn-primary whitespace-nowrap px-4">+ Novo Grupo de Ativos</button>
+                    <button onClick={handleNewAssetGroup} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold shadow-sm whitespace-nowrap">+ Novo Grupo de Ativos</button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-4 pr-2 pb-2">
@@ -204,28 +220,28 @@ const StandardLibraryModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
                                 {isExpanded && (
                                     <div className="p-2 space-y-2 bg-gray-50 dark:bg-gray-800/50">
-                                        {tasks.map((task) => (
-                                            <div key={task.id} className="p-3 border dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 hover:border-blue-300 transition-all relative group">
-                                                <div className="flex justify-between items-start">
-                                                    <div className="flex-1 cursor-pointer" onClick={() => { setEditingItem(task); setIsEditing(true); }}>
-                                                        <div className="font-bold text-sm text-gray-800 dark:text-gray-200 mb-1">{task.title}</div>
-                                                        <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
-                                                            <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">📅 {task.frequency_days} dias</span>
-                                                            <span className={`px-1.5 py-0.5 rounded text-white ${task.criticality === 'Alto' ? 'bg-orange-500' : 'bg-green-500'}`}>{task.criticality}</span>
-                                                            <span className="bg-gray-100 px-1.5 py-0.5 rounded border">⏱ {task.estimated_duration_minutes} min</span>
+                                            {tasks.map((task) => (
+                                                <div key={task.id} className="p-3 border dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 hover:border-blue-300 transition-all relative group">
+                                                    <div className="flex justify-between items-start">
+                                                        <div className="flex-1 cursor-pointer" onClick={() => { setEditingItem(task); setIsEditing(true); }}>
+                                                            <div className="font-bold text-sm text-gray-800 dark:text-gray-200 mb-1">{task.title}</div>
+                                                            <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
+                                                                <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">📅 {task.frequency_days} dias</span>
+                                                                <span className={`px-1.5 py-0.5 rounded text-white ${task.criticality === 'Alto' ? 'bg-orange-500' : 'bg-green-500'}`}>{task.criticality}</span>
+                                                                <span className="bg-gray-100 px-1.5 py-0.5 rounded border">⏱ {task.estimated_duration_minutes} min</span>
+                                                            </div>
+                                                            <div className="mt-1 text-[10px] text-gray-400 truncate max-w-md">
+                                                                {task.subtasks?.length > 0 ? `📋 ${task.subtasks.length} itens no checklist` : 'Sem checklist'}
+                                                            </div>
                                                         </div>
-                                                        <div className="mt-1 text-[10px] text-gray-400 truncate max-w-md">
-                                                            {task.subtasks?.length > 0 ? `📋 ${task.subtasks.length} itens no checklist` : 'Sem checklist'}
+                                                        <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button onClick={() => {setEditingItem(task); setIsEditing(true);}} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded">✏️</button>
+                                                            <button onClick={() => handleDelete(task.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">🗑️</button>
                                                         </div>
-                                                    </div>
-                                                    <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <button onClick={() => {setEditingItem(task); setIsEditing(true);}} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded">✏️</button>
-                                                        <button onClick={() => handleDelete(task.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">🗑️</button>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))}
-                                        {tasks.length === 0 && <div className="text-center text-xs text-gray-400 p-2 italic">Nenhuma tarefa.</div>}
+                                            ))}
+                                            {tasks.length === 0 && <div className="text-center text-xs text-gray-400 p-2 italic">Nenhuma tarefa.</div>}
                                     </div>
                                 )}
                             </div>

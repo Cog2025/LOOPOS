@@ -80,6 +80,17 @@ class SubtaskItem(BaseModel):
     done: bool
     comment: Optional[str] = None
 
+
+# Adicione esta classe para o histórico
+class ExecutionSession(BaseModel):
+    sessionId: str
+    userId: str
+    userName: str
+    startTime: str
+    endTime: str
+    durationSeconds: int
+    completedSubtasks: List[str] # Texto das subtarefas concluídas na sessão
+
 class OSBase(BaseModel):
     title: str
     description: str
@@ -106,6 +117,10 @@ class OSBase(BaseModel):
     executionStart: Optional[str] = None
     executionTimeSeconds: Optional[int] = 0
     isInReview: bool = False
+
+    # ✅ NOVOS CAMPOS NO SCHEMA
+    currentExecutorId: Optional[str] = None
+    executionHistory: List[ExecutionSession] = [] # ou List[Dict] para ser mais flexível
 
 class OSCreate(OSBase):
     id: str
