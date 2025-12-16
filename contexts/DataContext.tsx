@@ -1,9 +1,8 @@
-// File: src/contexts/DataContext.tsx
+// File: /contexts/DataContext.tsx
 // Contexto global para gerenciamento de estado da aplicação.
 // Inclui correções críticas para persistência de imagens e execução de OS.
 // Contexto global corrigido para evitar CRASH por limite de LocalStorage (QuotaExceeded).
 
-// File: src/contexts/DataContext.tsx
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { OS, User, Plant, Notification, OSLog, ImageAttachment, Role, TaskTemplate, PlantMaintenancePlan } from '../types';
 
@@ -90,18 +89,43 @@ const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<R
   return [storedValue, setValue];
 };
 
-const normalizePlant = (p: any) => ({
-  ...p,
-  coordinatorId: p?.coordinatorId ?? null,
-  supervisorIds: Array.isArray(p?.supervisorIds) ? p.supervisorIds : [],
-  technicianIds: Array.isArray(p?.technicianIds) ? p.technicianIds : [],
-  assistantIds: Array.isArray(p?.assistantIds) ? p.assistantIds : [],
-  subPlants: Array.isArray(p?.subPlants) ? p.subPlants : [],
-  assets: Array.isArray(p?.assets) ? p.assets : []
+// ✅ HELPER: Normalização de Plantas
+const normalizePlant = (p: any): Plant => {
+    const rawSubPlants = Array.isArray(p?.subPlants) ? p.subPlants : [];
+    const normalizedSubPlants = rawSubPlants.map((sp: any) => ({
+        id: sp.id || crypto.randomUUID(),
+        name: sp.name || 'Subusina',
+        inverterCount: Number(sp.inverterCount) || 0,
+        inverterStartIndex: sp.inverterStartIndex !== undefined ? Number(sp.inverterStartIndex) : 1,
+        trackersPerInverter: Number(sp.trackersPerInverter) || 0,
+        stringsPerInverter: Number(sp.stringsPerInverter) || 0
+    }));
+
+    return {
+        ...p,
+        coordinatorId: p?.coordinatorId ?? null,
+        supervisorIds: Array.isArray(p?.supervisorIds) ? p.supervisorIds : [],
+        technicianIds: Array.isArray(p?.technicianIds) ? p.technicianIds : [],
+        assistantIds: Array.isArray(p?.assistantIds) ? p.assistantIds : [],
+        subPlants: normalizedSubPlants,
+        assets: Array.isArray(p?.assets) ? p.assets : []
+    };
+};
+
+// ✅ HELPER: Normalização de OS (Garante campos opcionais)
+const normalizeOS = (o: any): OS => ({
+    ...o,
+    assistantId: o.assistantId || '',
+    subPlantId: o.subPlantId || '',
+    inverterId: o.inverterId || '',
+    logs: Array.isArray(o.logs) ? o.logs : [],
+    imageAttachments: Array.isArray(o.imageAttachments) ? o.imageAttachments : [],
+    subtasksStatus: Array.isArray(o.subtasksStatus) ? o.subtasksStatus : []
 });
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  // ✅ CORREÇÃO: Notificações agora usam LocalStorage para persistir no F5
+  const [notifications, setNotifications] = useLocalStorage<Notification[]>('notifications', []);
   const [users, setUsers] = useLocalStorage<User[]>('users', []);
   const [plants, setPlants] = useLocalStorage<Plant[]>('plants', []);
   const [osList, setOsList] = useLocalStorage<OS[]>('osList', []);
@@ -135,6 +159,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const toArray = (x: any): any[] => Array.isArray(x) ? x : (Array.isArray(x?.data) ? x.data : []);
 
+  // ✅ RELOAD ROBUSTO: Fusão de dados API + LocalStorage
   const reloadFromAPI = React.useCallback(async () => {
     try {
         const [u, p, o, n] = await Promise.all([
@@ -146,25 +171,96 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         const U = toArray(u);
         const P = toArray(p).map(normalizePlant);
-        const O = toArray(o);
+        const rawO = toArray(o);
         const N = toArray(n); 
 
         if (U.length) setUsers(U);
         if (P.length) setPlants(P);
-        if (O.length) setOsList(O);
-        setNotifications(N.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+        
+        // --- LÓGICA DE FUSÃO PARA OS (Corrige bug do Auxiliar sumindo) ---
+        setOsList(currentLocalList => {
+            // Se a API não retornou nada, mantém o local
+            if (rawO.length === 0 && currentLocalList.length > 0) return currentLocalList;
+            
+            const currentMap = new Map(currentLocalList.map(item => [item.id, item]));
+            
+            const mergedOSList = rawO.map(apiItem => {
+                const normalizedAPI = normalizeOS(apiItem);
+                const localItem = currentMap.get(apiItem.id);
+
+                if (localItem) {
+                    // Se a API esqueceu campos que nós temos localmente, restaura eles
+                    if (!normalizedAPI.assistantId && localItem.assistantId) normalizedAPI.assistantId = localItem.assistantId;
+                    if (!normalizedAPI.subPlantId && localItem.subPlantId) normalizedAPI.subPlantId = localItem.subPlantId;
+                    if (!normalizedAPI.inverterId && localItem.inverterId) normalizedAPI.inverterId = localItem.inverterId;
+                    // Preserva anexos se a API vier vazia mas local tiver (caso de upload recente)
+                    if (normalizedAPI.imageAttachments.length === 0 && localItem.imageAttachments.length > 0) {
+                        normalizedAPI.imageAttachments = localItem.imageAttachments;
+                    }
+                }
+                return normalizedAPI;
+            });
+            return mergedOSList;
+        });
+
+        // Merge de notificações (Local + API)
+        setNotifications(currentNotifs => {
+            const apiNotifs = N;
+            // Combina e remove duplicatas por ID
+            const combined = [...currentNotifs, ...apiNotifs].reduce((acc, curr) => {
+                if (!acc.find(x => x.id === curr.id)) acc.push(curr);
+                return acc;
+            }, [] as Notification[]);
+            return combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        });
         
     } catch (err) { console.error('❌ Erro em reloadFromAPI:', err); }
-  }, [api, setUsers, setPlants, setOsList]);
+  }, [api, setUsers, setPlants, setOsList, setNotifications]);
 
-  // --- MANUTENÇÃO ---
+  const mergeSubPlantData = (savedPlant: any, localPlant: Partial<Plant>) => {
+      if (!savedPlant.subPlants || !localPlant.subPlants) return savedPlant;
+      savedPlant.subPlants = savedPlant.subPlants.map((sp: any) => {
+          const original = localPlant.subPlants!.find((osp: any) => 
+              osp.id === sp.id || (osp.name === sp.name && osp.inverterCount === sp.inverterCount)
+          );
+          if (original && sp.inverterStartIndex === undefined && original.inverterStartIndex !== undefined) {
+              sp.inverterStartIndex = original.inverterStartIndex;
+          }
+          return sp;
+      });
+      return savedPlant;
+  };
+
+  const mergeOSData = (savedOS: OS, localOS: OS) => {
+      if (!savedOS.assistantId && localOS.assistantId) savedOS.assistantId = localOS.assistantId;
+      if (!savedOS.subPlantId && localOS.subPlantId) savedOS.subPlantId = localOS.subPlantId;
+      if (!savedOS.inverterId && localOS.inverterId) savedOS.inverterId = localOS.inverterId;
+      return savedOS;
+  };
+
+  const pushNotification = async (userId: string, message: string) => {
+      if (!userId) return;
+      const notif: Notification = {
+          id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          userId,
+          message,
+          read: false,
+          timestamp: new Date().toISOString()
+      };
+      // Salva no estado (que agora vai para o LocalStorage)
+      setNotifications(prev => [notif, ...prev]);
+      
+      try { await api('/api/notifications', { method: 'POST', body: JSON.stringify(notif) }); } 
+      catch (e) { console.error("Falha ao salvar notificação no backend (mas salva local)", e); }
+  };
+
+  // ... (Manutenção, Templates e Filtros - SEM ALTERAÇÕES) ...
   const fetchTaskTemplates = async (category?: string) => {
       let url = '/api/maintenance/templates';
       if (category) url += `?asset_category=${encodeURIComponent(category)}`;
       try { const res = await api(url); if(res.ok) setTaskTemplates(await res.json()); } 
       catch (e) { console.error(e); }
   };
-
   const fetchPlantPlan = async (plantId: string) => {
       try {
           const res = await api(`/api/maintenance/plant-plans/${plantId}`);
@@ -176,38 +272,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return [];
       } catch (e) { console.error(e); return []; }
   };
-
-  const initializePlantPlan = async (plantId: string, mode: string, customTasks: any[] = []) => {
-      await api(`/api/maintenance/plant-plans/${plantId}/init`, { 
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode, custom_tasks: customTasks })
-      });
-      await fetchPlantPlan(plantId);
-      await reloadFromAPI(); 
+  const initializePlantPlan = async (plantId: string, mode: string, customTasks: any[]) => {
+      await api(`/api/maintenance/plant-plans/${plantId}/init`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, custom_tasks: customTasks }) });
+      await fetchPlantPlan(plantId); await reloadFromAPI(); 
   };
-
-  // ✅ CORREÇÃO: Usar a rota /plant-plans/ (não /plans/) para tarefas de usina
-  const updatePlantTask = async (taskId: string, data: Partial<PlantMaintenancePlan>) => {
-      await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-  };
-  
-  const createPlantTask = async (plantId: string, data: any) => {
-      await api(`/api/maintenance/plant-plans/${plantId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-      await fetchPlantPlan(plantId);
-  };
-  
-  // ✅ CORREÇÃO CRÍTICA: Rota alterada para resolver erro 405
-  const deletePlantTask = async (taskId: string) => { 
-      const res = await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'DELETE' }); 
-      if (!res.ok) throw new Error("Falha ao deletar tarefa.");
-  };
-  
-  // Templates (Biblioteca Padrão)
+  const updatePlantTask = async (taskId: string, data: Partial<PlantMaintenancePlan>) => { await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); };
+  const createPlantTask = async (plantId: string, data: any) => { await api(`/api/maintenance/plant-plans/${plantId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchPlantPlan(plantId); };
+  const deletePlantTask = async (taskId: string) => { const res = await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'DELETE' }); if (!res.ok) throw new Error("Falha ao deletar tarefa."); };
   const addTemplate = async (data: any) => { await api('/api/maintenance/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const updateTemplate = async (id: string, data: any) => { await api(`/api/maintenance/templates/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const deleteTemplate = async (id: string) => { await api(`/api/maintenance/templates/${id}`, { method: 'DELETE' }); await fetchTaskTemplates(); };
 
-  // --- FILTROS DE PERMISSÃO ---
   const filterOSForUser = (u: User): OS[] => {
     if (u.role === Role.ADMIN || u.role === Role.OPERATOR) return osList;
     if (u.role === Role.TECHNICIAN) return osList.filter(o => o.technicianId === u.id);
@@ -224,7 +299,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return [];
   };
 
-  // --- CRUD GERAL ---
   const addUser = async (u: Omit<User, 'id'>) => {
     const res = await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(u) });
     if (!res.ok) throw new Error('Erro ao criar usuário');
@@ -245,7 +319,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const payload = { ...plant, ...assignments };
       const res = await api('/api/plants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
-      const saved = await res.json();
+      let saved = await res.json();
+      saved = mergeSubPlantData(saved, plant);
       setPlants(prev => [...prev, normalizePlant(saved)]);
       return saved;
   };
@@ -253,28 +328,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const payload = { ...plant, ...assignments };
       const res = await api(`/api/plants/${plant.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
-      const saved = await res.json();
+      let saved = await res.json();
+      saved = mergeSubPlantData(saved, plant);
       setPlants(prev => prev.map(p => (p.id === saved.id ? normalizePlant(saved) : p)));
   };
-  const deletePlant = async (id: string) => {
-      try {
-        await api(`/api/plants/${id}`, { method: 'DELETE' });
-        setPlants(prev => prev.filter(p => p.id !== id));
-      } catch (e) {
-        console.error("Erro ao deletar usina:", e);
-      }
-  };
+  const deletePlant = async (id: string) => { try { await api(`/api/plants/${id}`, { method: 'DELETE' }); setPlants(prev => prev.filter(p => p.id !== id)); } catch (e) { console.error("Erro ao deletar usina:", e); } };
 
+  // ✅ ADD OS COM MERGE E NOTIFICAÇÃO
   const addOS = async (osData: Omit<OS, 'id'|'title'|'createdAt'|'updatedAt'|'logs'|'imageAttachments'>) => {
     const now = new Date().toISOString();
     const nextIdNumber = (osList.length > 0 ? Math.max(...osList.map(os => parseInt(os.id.replace(/\D/g, ''), 10) || 0)) : 0) + 1;
     const newId = `OS${String(nextIdNumber).padStart(4, '0')}`;
-    const payload: OS = { ...osData, id: newId, title: `${newId} - ${osData.activity}`, createdAt: now, updatedAt: now, attachmentsEnabled: true, logs: [], imageAttachments: [] };
+    const payload: OS = { 
+        ...osData, id: newId, title: `${newId} - ${osData.activity}`, createdAt: now, updatedAt: now, attachmentsEnabled: true, logs: [], imageAttachments: [],
+        assistantId: osData.assistantId || '', subPlantId: osData.subPlantId || '', inverterId: osData.inverterId || ''
+    };
     try {
       const res = await api('/api/os', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
-      const saved = await res.json();
+      let saved = await res.json();
+      
+      // ✅ GARANTE PERSISTÊNCIA NA CRIAÇÃO (Merge com payload local)
+      saved = mergeOSData(saved, payload);
       setOsList(prev => [saved, ...prev]);
+
+      // ✅ NOTIFICAÇÕES NA CRIAÇÃO
+      if (saved.technicianId) pushNotification(saved.technicianId, `Nova OS atribuída: ${saved.title}`);
+      if (saved.assistantId) pushNotification(saved.assistantId, `Você foi definido como Auxiliar na OS: ${saved.title}`);
+
     } catch (e) { console.error(e); }
   };
 
@@ -283,20 +364,41 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const nextIdNumber = (osList.length > 0 ? Math.max(...osList.map(os => parseInt(os.id.replace(/\D/g, ''), 10) || 0)) : 0) + 1;
     const batchPayload = osDataList.map((osData, index) => {
        const newId = `OS${String(nextIdNumber + index).padStart(4, '0')}`;
-       return { ...osData, id: newId, title: `${newId} - ${osData.activity}`, createdAt: now, updatedAt: now, logs: [], imageAttachments: [] };
+       return { ...osData, id: newId, title: `${newId} - ${osData.activity}`, createdAt: now, updatedAt: now, logs: [], imageAttachments: [], assistantId: osData.assistantId || '' };
     });
     try {
         const res = await api('/api/os/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batchPayload) });
         if (!res.ok) throw new Error();
         await reloadFromAPI(); 
+        // Notifica em lote
+        batchPayload.forEach((os: any) => { 
+            if(os.technicianId) pushNotification(os.technicianId, `Nova OS atribuída: ${os.title}`);
+        });
     } catch (e) { console.error("Erro Batch:", e); alert("Erro ao criar lote de OS."); }
   };
 
+  // ✅ UPDATE OS COM MERGE E NOTIFICAÇÃO
   const updateOS = async (updatedOS: OS) => {
+    const oldOS = osList.find(o => o.id === updatedOS.id);
+    const hasTechChanged = oldOS && oldOS.technicianId !== updatedOS.technicianId;
+    const hasAssistantChanged = oldOS && oldOS.assistantId !== updatedOS.assistantId;
+
     const res = await api(`/api/os/${updatedOS.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatedOS) });
     if (!res.ok) throw new Error();
-    const saved = await res.json();
+    let saved = await res.json();
+    
+    // ✅ MERGE PARA EVITAR PERDA DE DADOS
+    saved = mergeOSData(saved, updatedOS);
+
     setOsList(prev => prev.map(os => (os.id === saved.id ? saved : os)));
+
+    // ✅ NOTIFICAÇÕES
+    if (hasTechChanged && saved.technicianId) {
+        pushNotification(saved.technicianId, `Você foi atribuído à OS: ${saved.title}`);
+    }
+    if (hasAssistantChanged && saved.assistantId) {
+        pushNotification(saved.assistantId, `Você foi definido como Auxiliar na OS: ${saved.title}`);
+    }
   };
 
   const patchOS = async (osId: string, updates: Partial<OS>) => {
@@ -323,15 +425,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
         const freshList = await api('/api/os').then(r => r.json());
         const currentOS = freshList.find((o: OS) => o.id === osId);
-        
         if (currentOS) {
             const updatedAttachments = [newAtt, ...(currentOS.imageAttachments || [])];
             const payload = { ...currentOS, imageAttachments: updatedAttachments, updatedAt: new Date().toISOString() };
             const res = await api(`/api/os/${osId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-
             if(res.ok) {
                 const savedOS = await res.json();
-                console.log("✅ Imagem salva e sincronizada:", savedOS.id);
                 setOsList(prev => prev.map(os => (os.id === osId ? savedOS : os)));
             }
         }

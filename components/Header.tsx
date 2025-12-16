@@ -5,14 +5,14 @@ import React from 'react';
 import { Menu, Search, Plus, Bell, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
+import { Role } from '../types';
 
-// Observe o "?" em onNewOSClick
 interface HeaderProps {
   searchTerm: string;
   setSearchTerm: (term: string) => void;
   onMenuClick: () => void;
   toggleSidebar: () => void;
-  onNewOSClick?: () => void; // ✅ Prop opcional
+  onNewOSClick?: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ 
@@ -22,6 +22,9 @@ const Header: React.FC<HeaderProps> = ({
   onNewOSClick 
 }) => {
   const { user, logout } = useAuth();
+
+  // ✅ Bloqueia permissão para Técnicos e Auxiliares
+  const isAllowedToCreate = user?.role !== Role.TECHNICIAN && user?.role !== Role.ASSISTANT;
 
   return (
     <header className="h-16 bg-white dark:bg-gray-800 shadow-sm flex items-center justify-between px-4 z-10 shrink-0">
@@ -43,8 +46,8 @@ const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-3 ml-4">
-        {/* ✅ AQUI: Só renderiza se a função existir (ou seja, se for autorizado) */}
-        {onNewOSClick && (
+        {/* ✅ AQUI: Renderiza apenas se tiver permissão e função */}
+        {onNewOSClick && isAllowedToCreate && (
           <button
             onClick={onNewOSClick}
             className="hidden sm:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"

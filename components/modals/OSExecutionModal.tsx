@@ -337,7 +337,7 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
                                                     </div>
                                                 </div>
                                                 <label className={`cursor-pointer p-1.5 rounded hover:bg-gray-200 ${isUploading ? 'opacity-50' : ''}`}>
-                                                    <input type="file" className="hidden" accept="image/*" capture="environment" multiple onChange={(e) => handlePhotoUpload(e, i)} />
+                                                    <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e, i)} />
                                                     <Camera className="w-5 h-5 text-gray-400 hover:text-blue-500" />
                                                 </label>
                                             </div>
@@ -380,7 +380,7 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
                                         </div>
                                     ))}
                                     <label className={`w-20 h-20 flex items-center justify-center bg-gray-100 rounded border border-dashed cursor-pointer hover:bg-gray-200 ${isUploading ? 'opacity-50' : ''}`}>
-                                        <input type="file" className="hidden" accept="image/*" capture="environment" multiple onChange={(e) => handlePhotoUpload(e)} disabled={isUploading} />
+                                        <input type="file" className="hidden" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e)} disabled={isUploading} />
                                         <UploadCloud className="text-gray-400" />
                                     </label>
                                 </div>
