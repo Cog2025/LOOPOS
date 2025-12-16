@@ -14,6 +14,7 @@ class User(Base):
     role = Column(String)
     can_login = Column(Boolean, default=True)
     supervisorId = Column(String, nullable=True)
+    assistantId = Column(String, nullable=True)
     plantIds = Column(JSON, default=list) 
 
 class Plant(Base):
@@ -67,6 +68,7 @@ class OS(Base):
     plantId = Column(String)
     technicianId = Column(String, nullable=True)
     supervisorId = Column(String, nullable=True)
+    assistantId = Column(String, nullable=True)
     startDate = Column(String) 
     endDate = Column(String, nullable=True)
     activity = Column(String)

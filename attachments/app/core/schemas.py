@@ -141,13 +141,14 @@ class OSOut(OSBase):
 
 # --- Notificações ---
 class NotificationCreate(BaseModel):
+    id: str
     userId: str
     message: str
     read: bool = False
     timestamp: str
 
 class NotificationOut(NotificationCreate):
-    id: str
+    #id: str
     class Config:
         from_attributes = True
 

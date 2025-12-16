@@ -1,4 +1,4 @@
-# /attachments/app/main.py
+# Arquivo: attachments/app/main.py
 print("🔄 [DEBUG] Iniciando imports do main.py...")
 from app.core.database import engine, get_db
 from app.core import models
@@ -47,7 +47,7 @@ app.include_router(maintenance_router)
 
 # 2. SERVIR IMAGENS (PARA O TUNNEL E MINIATURAS FUNCIONAREM)
 # Caminho absoluto para .../LOOPOS/attachments
-# (Sobe 2 níveis a partir de app/main.py)
+# (Sobe 2 níveis a partir de app/main.py para chegar na raiz de attachments)
 CURRENT_DIR = Path(__file__).resolve().parent.parent 
 ATTACHMENTS_DIR = CURRENT_DIR # .../LOOPOS/attachments
 
@@ -58,7 +58,7 @@ if ATTACHMENTS_DIR.exists():
 else:
     print(f"⚠️ [AVISO] Pasta de anexos não encontrada em: {ATTACHMENTS_DIR}")
 
-# Rotas Auth
+# --- ROTAS DE AUTENTICAÇÃO ---
 @app.post("/api/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
@@ -68,10 +68,37 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         raise HTTPException(status_code=400, detail="Usuário inativo")
     return {"access_token": create_access_token({"sub": user.id, "role": user.role}), "token_type": "bearer", "user": user}
 
+# --- ROTAS DE NOTIFICAÇÕES ---
+
 @app.get("/api/notifications", response_model=List[NotificationOut])
 def list_notifications(x_user_id: str = Header(None), db: Session = Depends(get_db)):
     if not x_user_id: return []
+    # Retorna as notificações do usuário, ordenadas das mais recentes para as antigas (opcional, mas recomendado)
     return db.query(models.Notification).filter(models.Notification.userId == x_user_id).all()
+
+@app.post("/api/notifications", status_code=201)
+def create_notification(payload: NotificationCreate, db: Session = Depends(get_db)):
+    # Evita duplicidade se o ID já existir
+    if db.query(models.Notification).filter(models.Notification.id == payload.id).first():
+        return {"msg": "Already exists"}
+    
+    new_notif = models.Notification(**payload.dict())
+    db.add(new_notif)
+    db.commit()
+    return new_notif
+
+# ✅ NOVA ROTA: CORREÇÃO DO ERRO 405 (Marcar como lida)
+@app.put("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, db: Session = Depends(get_db)):
+    notif = db.query(models.Notification).filter(models.Notification.id == notification_id).first()
+    
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    notif.read = True
+    db.commit()
+    
+    return {"ok": True}
 
 # 3. SERVIR O SITE REACT (MODO PRODUÇÃO)
 # Caminho absoluto para .../LOOPOS/dist
@@ -92,6 +119,8 @@ if DIST_DIR.exists():
         file_path = DIST_DIR / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
+        
+        # Para SPA (Single Page Application), retorna index.html se não achar o arquivo
         return FileResponse(DIST_DIR / "index.html")
 else:
     print(f"⚠️ [ERRO] Pasta 'dist' não encontrada em {DIST_DIR}. Rode 'npm run build' na raiz.")

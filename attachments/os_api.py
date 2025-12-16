@@ -23,6 +23,7 @@ class OSModel(BaseModel):
     plantId: str
     technicianId: Optional[str] = None
     supervisorId: Optional[str] = None
+    assistantId: Optional[str] = None
     startDate: str
     endDate: Optional[str] = None
     activity: str
