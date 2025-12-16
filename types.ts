@@ -42,6 +42,7 @@ export interface SubPlant {
     id: string; 
     name: string;
     inverterCount: number;
+    inverterStartIndex?: number; // ✅ Novo: Define onde começa a contagem (ex: 5 para INV2.5)
     trackersPerInverter: number;
     stringsPerInverter: number;
 }
@@ -51,7 +52,7 @@ export interface Plant {
     client: string;
     name: string;
     assets: string[];
-    subPlants: SubPlant[];
+    subPlants: SubPlant[]; 
     stringCount: number;
     trackerCount: number;
     coordinatorId?: string | null;
@@ -99,35 +100,28 @@ export interface OS {
     description: string;
     status: OSStatus;
     priority: Priority;
-    
     plantId: string;
     subPlantId?: string;
     inverterId?: string;
-    
     technicianId: string;
     supervisorId: string;
-    // ✅ NOVO CAMPO: Auxiliar
-    assistantId?: string; 
-    
+    assistantId?: string;
     startDate: string;
     endDate?: string;
     createdAt: string;
     updatedAt: string;
     activity: string;
-    assets: string[]; 
-    
+    assets: string[];
     logs: OSLog[];
     attachmentsEnabled: boolean;
     imageAttachments: ImageAttachment[];
-    
     executionStart?: string;
     executionTimeSeconds?: number;
-    currentExecutorId?: string | null; 
-    executionHistory?: ExecutionSession[]; 
+    currentExecutorId?: string | null;
+    executionHistory?: ExecutionSession[];
     isInReview?: boolean;
     subtasksStatus?: SubtaskItem[]; 
     maintenancePlanId?: string;
-
     classification1?: string;
     classification2?: string;
     plannedDowntime?: number;

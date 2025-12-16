@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
-import { Plant, Role } from '../../types';
+import { Plant, Role, SubPlant } from '../../types';
+import { ChevronDown, ChevronRight, Calculator, Trash2, Plus, RefreshCw } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -21,7 +22,15 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
     assets: [], subPlants: []
   });
   
-  const [subPlantQty, setSubPlantQty] = useState(0);
+  // Controle de Subusinas
+  const [subPlants, setSubPlants] = useState<SubPlant[]>([]);
+  const [expandedSubPlant, setExpandedSubPlant] = useState<string | null>(null);
+
+  // Configuração Padrão (para novas subusinas)
+  const [stdInverters, setStdInverters] = useState(0);
+  const [stdStrings, setStdStrings] = useState(0);
+  const [stdTrackers, setStdTrackers] = useState(0);
+
   const [assignments, setAssignments] = useState({ 
       coordinatorId: '', supervisorIds: [] as string[], technicianIds: [] as string[], assistantIds: [] as string[] 
   });
@@ -33,7 +42,15 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
   useEffect(() => {
     if (initialData) {
       setFormData(initialData);
-      setSubPlantQty(initialData.subPlants?.length || 0);
+      setSubPlants(initialData.subPlants || []);
+      
+      // Carrega padrão da primeira subusina se existir
+      if (initialData.subPlants && initialData.subPlants.length > 0) {
+          setStdInverters(initialData.subPlants[0].inverterCount || 0);
+          setStdStrings(initialData.subPlants[0].stringsPerInverter || 0);
+          setStdTrackers(initialData.subPlants[0].trackersPerInverter || 0);
+      }
+
       setAssignments({
         coordinatorId: initialData.coordinatorId || '',
         supervisorIds: initialData.supervisorIds || [],
@@ -45,23 +62,82 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
     }
   }, [initialData, presetClient]);
 
+  // ✅ Função inteligente para adicionar Subusina
+  const addSubPlant = () => {
+      if (!formData.name) {
+          alert("Por favor, preencha o Nome da Usina antes de adicionar subusinas.");
+          return;
+      }
+
+      const nextNum = subPlants.length + 1;
+      
+      // Calcula onde deve começar a numeração baseado na última subusina
+      let nextStart = 1;
+      if (subPlants.length > 0) {
+          const last = subPlants[subPlants.length - 1];
+          nextStart = (last.inverterStartIndex || 1) + last.inverterCount;
+      }
+
+      // ✅ Nome Automático: "NomeUsina X"
+      const autoName = `${formData.name} ${nextNum}`;
+
+      const newSub: SubPlant = {
+          id: crypto.randomUUID(),
+          name: autoName,
+          inverterCount: stdInverters,
+          inverterStartIndex: nextStart, 
+          stringsPerInverter: stdStrings,
+          trackersPerInverter: stdTrackers
+      };
+      
+      setSubPlants([...subPlants, newSub]);
+      setExpandedSubPlant(newSub.id);
+  };
+
+  const updateSubPlant = (id: string, field: keyof SubPlant, value: any) => {
+      setSubPlants(prev => prev.map(sp => sp.id === id ? { ...sp, [field]: value } : sp));
+  };
+
+  const removeSubPlant = (id: string) => {
+      setSubPlants(prev => prev.filter(sp => sp.id !== id));
+  };
+
+  // ✅ Função para renomear todas as subusinas em massa
+  const renameAllSubPlants = () => {
+      if (!formData.name) return;
+      if (confirm(`Deseja renomear todas as subusinas seguindo o padrão "${formData.name} 1", "${formData.name} 2", etc?`)) {
+          setSubPlants(prev => prev.map((sp, idx) => ({
+              ...sp,
+              name: `${formData.name} ${idx + 1}`
+          })));
+      }
+  };
+
+  const recalculateTotals = () => {
+      let totalStrings = 0;
+      let totalTrackers = 0;
+      
+      subPlants.forEach(sp => {
+          totalStrings += sp.inverterCount * sp.stringsPerInverter;
+          totalTrackers += sp.inverterCount * sp.trackersPerInverter;
+      });
+
+      setFormData(prev => ({
+          ...prev,
+          stringCount: totalStrings,
+          trackerCount: totalTrackers
+      }));
+      alert(`Totais Recalculados:\nStrings: ${totalStrings}\nTrackers: ${totalTrackers}`);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    let finalSubPlants = formData.subPlants || [];
-    if (subPlantQty > finalSubPlants.length) {
-       const diff = subPlantQty - finalSubPlants.length;
-       for (let i = 0; i < diff; i++) {
-           finalSubPlants.push({ 
-               id: crypto.randomUUID(), 
-               name: `Subusina ${finalSubPlants.length + 1}`,
-               inverterCount: 0, trackersPerInverter: 0, stringsPerInverter: 0 
-           });
-       }
-    } else if (subPlantQty < finalSubPlants.length) {
-       finalSubPlants = finalSubPlants.slice(0, subPlantQty);
+    if (subPlants.length > 0 && !formData.name) {
+        alert("O Nome da Usina é obrigatório.");
+        return;
     }
 
-    const payload = { ...formData, subPlants: finalSubPlants } as Plant;
+    const payload = { ...formData, subPlants } as Plant;
     
     if (initialData?.id) {
         await updatePlant(payload, assignments);
@@ -85,13 +161,14 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
     }
   };
 
-  const inputClass = "w-full p-2.5 border border-gray-400 rounded text-sm text-gray-900 bg-white focus:ring-2 focus:ring-blue-600 outline-none placeholder-gray-500 font-medium";
-  // ✅ Labels dentro dos cartões podem ser um pouco mais simples, pois o título do cartão já dá contexto
-  const innerLabelClass = "block text-xs font-bold text-gray-700 mb-1 uppercase";
-  
-  // ✅ Estilo do Cartão (Igual ao de Equipe)
+  // Classes de Estilo Base
+  const inputClass = "w-full p-2.5 border border-gray-400 rounded text-sm text-gray-900 bg-white focus:ring-2 focus:ring-blue-600 outline-none placeholder-gray-500 font-bold";
+  const innerLabelClass = "block text-xs font-extrabold text-gray-900 mb-1 uppercase tracking-wide";
   const cardClass = "bg-gray-50 p-4 rounded-lg border border-gray-300";
   const cardTitleClass = "font-extrabold text-sm text-gray-900 mb-3 border-b border-gray-300 pb-2 uppercase";
+
+  const topoLabelClass = "text-[11px] font-extrabold text-gray-900 uppercase block mb-0.5";
+  const topoInputClass = "w-full p-1.5 text-sm font-bold text-gray-900 border border-gray-400 rounded bg-white focus:ring-1 focus:ring-blue-600 outline-none";
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={initialData ? 'Editar Usina' : 'Nova Usina'}>
@@ -106,19 +183,31 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
                 {activeTab === 'DATA' && (
                     <div className="space-y-4">
                         
-                        {/* CARTÃO 1: Informações Básicas */}
                         <div className={cardClass}>
                             <h4 className={cardTitleClass}>Informações Básicas</h4>
                             <div className="space-y-3">
                                 <div>
-                                    <label className={innerLabelClass}>Nome da Usina</label>
-                                    <input 
-                                        required 
-                                        value={formData.name || ''} 
-                                        onChange={e => setFormData({...formData, name: e.target.value})} 
-                                        className={inputClass} 
-                                        placeholder="Ex: UFV Sol Poente"
-                                    />
+                                    <label className={innerLabelClass}>Nome da Usina *</label>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            required 
+                                            value={formData.name || ''} 
+                                            onChange={e => setFormData({...formData, name: e.target.value})} 
+                                            className={inputClass} 
+                                            placeholder="Ex: UFV Sol Poente"
+                                        />
+                                        {/* Botão para atualizar nomes das subusinas se o nome principal mudar */}
+                                        {subPlants.length > 0 && (
+                                            <button 
+                                                type="button" 
+                                                onClick={renameAllSubPlants}
+                                                className="bg-gray-200 text-gray-700 p-2 rounded hover:bg-gray-300"
+                                                title="Renomear subusinas com este nome"
+                                            >
+                                                <RefreshCw size={18} />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                                 <div>
                                     <label className={innerLabelClass}>Cliente / Proprietário</label>
@@ -139,55 +228,106 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
                             </div>
                         </div>
 
-                        {/* CARTÃO 2: Dimensionamento */}
+                        {/* ÁREA DE TOPOLOGIA AVANÇADA */}
                         <div className={cardClass}>
-                            <h4 className={cardTitleClass}>Dimensionamento</h4>
-                            <div className="grid grid-cols-2 gap-4 mb-3">
+                            <div className="flex justify-between items-center mb-3 border-b border-gray-300 pb-2">
+                                <h4 className="font-extrabold text-sm text-gray-900 uppercase m-0">Topologia (Subusinas & Inversores)</h4>
+                                <button type="button" onClick={addSubPlant} className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 font-bold flex items-center gap-1 shadow-sm"><Plus size={14}/> Subusina</button>
+                            </div>
+
+                            {/* Configuração Padrão */}
+                            <div className="bg-blue-50 p-3 rounded-lg mb-3 border border-blue-200 grid grid-cols-3 gap-3">
+                                <div className="col-span-3 text-[11px] font-extrabold text-blue-900 uppercase tracking-wide">Padrão para novas adições:</div>
+                                
                                 <div>
-                                    <label className={innerLabelClass}>Qtde. Strings</label>
-                                    <input type="number" value={formData.stringCount || 0} onChange={e => setFormData({...formData, stringCount: parseInt(e.target.value) || 0})} className={inputClass} />
+                                    <label className={topoLabelClass}>Inv/Sub</label>
+                                    <input type="number" min={0} value={stdInverters} onChange={e => setStdInverters(Number(e.target.value))} className={topoInputClass} placeholder="0" />
                                 </div>
                                 <div>
-                                    <label className={innerLabelClass}>Qtde. Trackers</label>
-                                    <input type="number" value={formData.trackerCount || 0} onChange={e => setFormData({...formData, trackerCount: parseInt(e.target.value) || 0})} className={inputClass} />
+                                    <label className={topoLabelClass}>Str/Inv</label>
+                                    <input type="number" min={0} value={stdStrings} onChange={e => setStdStrings(Number(e.target.value))} className={topoInputClass} placeholder="0" />
+                                </div>
+                                <div>
+                                    <label className={topoLabelClass}>Trk/Inv</label>
+                                    <input type="number" min={0} value={stdTrackers} onChange={e => setStdTrackers(Number(e.target.value))} className={topoInputClass} placeholder="0" />
                                 </div>
                             </div>
-                            <div>
-                                <label className={innerLabelClass}>Número de Subusinas</label>
-                                <input type="number" min={0} max={20} value={subPlantQty} onChange={e => setSubPlantQty(parseInt(e.target.value) || 0)} className={inputClass} />
-                                <p className="text-xs text-blue-700 mt-1 font-bold">ℹ️ Ao salvar, as subusinas serão geradas automaticamente.</p>
+
+                            {/* Lista de Subusinas */}
+                            <div className="space-y-2">
+                                {subPlants.map((sp, index) => {
+                                    const isExpanded = expandedSubPlant === sp.id;
+                                    return (
+                                        <div key={sp.id} className="border border-gray-400 rounded bg-white overflow-hidden shadow-sm">
+                                            <div 
+                                                className={`p-2.5 flex justify-between items-center cursor-pointer transition-colors ${isExpanded ? 'bg-gray-200' : 'bg-gray-100 hover:bg-gray-200'}`}
+                                                onClick={() => setExpandedSubPlant(isExpanded ? null : sp.id)}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    {isExpanded ? <ChevronDown size={18} className="text-gray-700"/> : <ChevronRight size={18} className="text-gray-700"/>}
+                                                    <span className="font-extrabold text-sm text-gray-900">{sp.name}</span>
+                                                    <span className="text-xs font-bold text-gray-600 bg-gray-300 px-2 py-0.5 rounded">({sp.inverterCount} Inv)</span>
+                                                </div>
+                                                <button onClick={(e) => { e.stopPropagation(); removeSubPlant(sp.id); }} className="text-red-600 p-1.5 hover:bg-red-100 rounded transition-colors"><Trash2 size={16}/></button>
+                                            </div>
+                                            
+                                            {isExpanded && (
+                                                <div className="p-3 bg-white grid grid-cols-2 gap-3 border-t border-gray-300 animate-fadeIn">
+                                                    <div className="col-span-2">
+                                                        <label className={innerLabelClass}>Nome da Subusina</label>
+                                                        <input value={sp.name} onChange={e => updateSubPlant(sp.id, 'name', e.target.value)} className={inputClass} />
+                                                    </div>
+                                                    <div>
+                                                        <label className={innerLabelClass}>Qtd. Inversores</label>
+                                                        <input type="number" value={sp.inverterCount} onChange={e => updateSubPlant(sp.id, 'inverterCount', Number(e.target.value))} className={inputClass} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs font-extrabold text-blue-800 mb-1 uppercase">Início Numeração</label>
+                                                        <input type="number" value={sp.inverterStartIndex || 1} onChange={e => updateSubPlant(sp.id, 'inverterStartIndex', Number(e.target.value))} className={`${inputClass} border-blue-400 bg-blue-50 text-blue-900`} />
+                                                        <p className="text-[10px] text-gray-500 mt-1">Gera: INV{index+1}.{sp.inverterStartIndex}...</p>
+                                                    </div>
+                                                    <div className="col-span-2 flex gap-4 bg-gray-50 p-2 rounded border border-gray-200">
+                                                        <div className="flex-1">
+                                                            <label className={innerLabelClass}>Strings/Inv</label>
+                                                            <input type="number" value={sp.stringsPerInverter} onChange={e => updateSubPlant(sp.id, 'stringsPerInverter', Number(e.target.value))} className={inputClass} />
+                                                        </div>
+                                                        <div className="flex-1">
+                                                            <label className={innerLabelClass}>Trackers/Inv</label>
+                                                            <input type="number" value={sp.trackersPerInverter} onChange={e => updateSubPlant(sp.id, 'trackersPerInverter', Number(e.target.value))} className={inputClass} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                                {subPlants.length === 0 && <p className="text-sm text-gray-500 italic text-center py-4 border border-dashed border-gray-300 rounded">Nenhuma subusina adicionada. Use o botão acima para criar.</p>}
+                            </div>
+
+                            <div className="mt-4 pt-3 border-t border-gray-300 flex justify-between items-center bg-gray-100 p-2 rounded">
+                                <div className="text-xs text-gray-800">
+                                    Total Strings: <strong>{formData.stringCount}</strong> | Trackers: <strong>{formData.trackerCount}</strong>
+                                </div>
+                                <button type="button" onClick={recalculateTotals} className="text-xs flex items-center gap-1 bg-white border border-gray-400 hover:bg-gray-100 px-3 py-1.5 rounded text-gray-900 font-bold shadow-sm transition-colors">
+                                    <Calculator size={14}/> Recalcular Totais
+                                </button>
                             </div>
                         </div>
 
-                        {/* CARTÃO 3: Ativos */}
                         <div className={cardClass}>
-                            <h4 className={cardTitleClass}>Ativos e Equipamentos</h4>
+                            <h4 className={cardTitleClass}>Ativos Gerais</h4>
                             <div className="flex gap-2 mb-3">
-                                <input 
-                                    value={newAsset} 
-                                    onChange={e => setNewAsset(e.target.value)} 
-                                    placeholder="Adicionar novo ativo..." 
-                                    className={inputClass} 
-                                    onKeyDown={e => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            if (newAsset.trim()) {
-                                                setFormData(prev => ({ ...prev, assets: [...(prev.assets || []), newAsset.trim()] }));
-                                                setNewAsset('');
-                                            }
-                                        }
-                                    }}
+                                <input value={newAsset} onChange={e => setNewAsset(e.target.value)} placeholder="Novo ativo..." className={inputClass} 
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (newAsset.trim()) { setFormData(prev => ({ ...prev, assets: [...(prev.assets || []), newAsset.trim()] })); setNewAsset(''); } } }}
                                 />
                                 <button type="button" onClick={() => { if(newAsset) { setFormData(prev => ({...prev, assets: [...(prev.assets||[]), newAsset]})); setNewAsset(''); } }} className="px-4 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-sm text-lg">+</button>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {formData.assets?.map((asset, i) => (
                                     <span key={i} className="px-3 py-1.5 bg-white border border-gray-300 text-gray-800 rounded-md text-sm flex items-center gap-2 font-bold shadow-sm">
-                                        {asset} 
-                                        <button type="button" onClick={() => setFormData(prev => ({...prev, assets: prev.assets?.filter((_, idx) => idx !== i)}))} className="text-red-500 hover:text-red-700 font-bold ml-1 text-lg leading-none">×</button>
+                                        {asset} <button type="button" onClick={() => setFormData(prev => ({...prev, assets: prev.assets?.filter((_, idx) => idx !== i)}))} className="text-red-500 hover:text-red-700 font-bold ml-1 text-lg leading-none">×</button>
                                     </span>
                                 ))}
-                                {formData.assets?.length === 0 && <span className="text-sm text-gray-500 italic">Nenhum ativo cadastrado.</span>}
                             </div>
                         </div>
                     </div>
@@ -195,7 +335,6 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
 
                 {activeTab === 'TEAM' && (
                     <div className="space-y-4">
-                        {/* Coordenador */}
                         <div className={cardClass}>
                             <h4 className={cardTitleClass}>Coordenador Responsável</h4>
                             <div className="max-h-40 overflow-y-auto space-y-1 custom-scrollbar pr-1">
@@ -212,16 +351,9 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
                                         <span className="text-xs text-gray-500">@{u.username}</span>
                                     </label>
                                 ))}
-                                {users.filter(u => u.role === Role.COORDINATOR).length === 0 && <p className="text-sm text-red-500">Nenhum coordenador encontrado.</p>}
                             </div>
                         </div>
-
-                        {/* Outros Cargos */}
-                        {[
-                            { title: 'Supervisores', role: Role.SUPERVISOR, key: 'supervisorIds', list: assignments.supervisorIds },
-                            { title: 'Técnicos', role: Role.TECHNICIAN, key: 'technicianIds', list: assignments.technicianIds },
-                            { title: 'Auxiliares', role: Role.ASSISTANT, key: 'assistantIds', list: assignments.assistantIds },
-                        ].map(group => (
+                        {[ { title: 'Supervisores', role: Role.SUPERVISOR, key: 'supervisorIds', list: assignments.supervisorIds }, { title: 'Técnicos', role: Role.TECHNICIAN, key: 'technicianIds', list: assignments.technicianIds }, { title: 'Auxiliares', role: Role.ASSISTANT, key: 'assistantIds', list: assignments.assistantIds } ].map(group => (
                             <div key={group.key} className={cardClass}>
                                 <h4 className={cardTitleClass}>{group.title}</h4>
                                 <div className="max-h-40 overflow-y-auto space-y-1 custom-scrollbar pr-1">
@@ -236,9 +368,6 @@ const PlantForm: React.FC<Props> = ({ isOpen, onClose, initialData, presetClient
                                             <span className="text-sm text-gray-900 font-medium">{u.name}</span>
                                         </label>
                                     ))}
-                                    {users.filter(u => u.role === group.role).length === 0 && (
-                                        <p className="text-xs text-gray-500 italic p-1">Nenhum usuário encontrado.</p>
-                                    )}
                                 </div>
                             </div>
                         ))}
