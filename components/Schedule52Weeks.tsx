@@ -28,13 +28,10 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedPlant, setSelectedPlant] = useState('');
   const [selectedPriority, setSelectedPriority] = useState('');
-  
-  // MUDANÇA SOLICITADA: Filtro por Ativo (substitui Atividade)
   const [selectedAsset, setSelectedAsset] = useState('');
-  
   const [selectedTechnician, setSelectedTechnician] = useState('');
 
-  // --- ESTADOS DE UI (Modais e Seleção) ---
+  // --- ESTADOS DE UI (Modais e Seleção - RESTAURADOS) ---
   const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
   const [moreInfoModal, setMoreInfoModal] = useState<{ isOpen: boolean; title: string; items: OS[] }>({
       isOpen: false, title: '', items: []
@@ -46,40 +43,41 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
   // Permissões de gerenciamento
   const canManage = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
 
-  // Listas auxiliares para os Selects
   const years = [2024, 2025, 2026, 2027];
-  const clients = Array.from(new Set(plants.map(p => p.client))).sort();
-  
-  // Filtra usinas baseado no cliente selecionado
-  const filteredPlants = selectedClient ? plants.filter(p => p.client === selectedClient) : plants;
 
-  // --- FILTRO DE TÉCNICOS (Lógica Estrita por Usina) ---
-  const technicians = useMemo(() => {
-    return users.filter(u => {
-      // 1. Deve ter o papel de Técnico
-      if (u.role !== Role.TECHNICIAN) return false;
-      
-      // 2. Se uma usina estiver selecionada, o técnico DEVE estar vinculado a ela
-      if (selectedPlant) {
-        // Verifica se plantIds existe e inclui a usina selecionada
-        return u.plantIds && u.plantIds.includes(selectedPlant);
-      }
-      
-      // 3. Se nenhuma usina selecionada, mostra todos (ou poderia filtrar por Cliente se desejado)
-      return true; 
-    });
-  }, [users, selectedPlant]);
+  // --- FILTROS DE SEGURANÇA (MANTIDOS) ---
+  const availablePlants = useMemo(() => {
+      const filtered = plants.filter(plant => {
+          if (!user) return false;
+          if ([Role.ADMIN, Role.OPERATOR].includes(user.role)) return true;
+          return user.plantIds?.includes(plant.id);
+      });
+      return filtered.sort((a,b) => a.name.localeCompare(b.name));
+  }, [plants, user]);
 
-  // --- LISTA DE ATIVOS ÚNICOS (Para o Dropdown) ---
+  const availableUsers = useMemo(() => {
+      if (!user) return [];
+      if ([Role.ADMIN, Role.OPERATOR].includes(user.role)) return users;
+      const myPlantIds = user.plantIds || [];
+      return users.filter(targetUser => {
+          const targetPlants = targetUser.plantIds || [];
+          return targetPlants.some(pId => myPlantIds.includes(pId));
+      }).sort((a,b) => a.name.localeCompare(b.name));
+  }, [users, user]);
+
+  // Filtro de Clientes baseado nas usinas disponíveis
+  const availableClients = useMemo(() => {
+      const clients = new Set(availablePlants.map(p => p.client || 'Indefinido'));
+      return Array.from(clients).sort();
+  }, [availablePlants]);
+
+  // --- LISTA DE ATIVOS ÚNICOS ---
   const uniqueAssets = useMemo(() => {
     const assetsSet = new Set<string>();
-    // Varre todas as OSs disponíveis para extrair os nomes dos ativos
     osList.forEach(os => {
-      // Verifica array de assets
       if (os.assets && os.assets.length > 0) {
         os.assets.forEach(a => assetsSet.add(a));
       }
-      // Verifica campo legado ou auxiliar assetName
       if ((os as any).assetName) {
         assetsSet.add((os as any).assetName);
       }
@@ -87,7 +85,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
     return Array.from(assetsSet).sort();
   }, [osList]);
 
-  // --- LÓGICA CENTRAL DE FILTRAGEM (Grid) ---
+  // --- LÓGICA DE FILTRAGEM (Grid) ---
   const visibleOS = useMemo(() => {
     // 1. Filtro de Segurança (RBAC)
     let list = user ? filterOSForUser(user) : osList;
@@ -99,13 +97,18 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
         // Filtro de Ano
         if (date.getFullYear() !== selectedYear) return false;
         
-        // Filtro de Usina
+        // Filtro de Usina e Cliente
+        const plant = plants.find(p => p.id === os.plantId);
+        if (selectedClient && plant?.client !== selectedClient) return false;
         if (selectedPlant && os.plantId !== selectedPlant) return false;
         
+        // Segurança: Bloqueia se a usina não estiver na lista permitida
+        if (!availablePlants.find(p => p.id === os.plantId)) return false;
+
         // Filtro de Prioridade
         if (selectedPriority && os.priority !== selectedPriority) return false;
         
-        // Filtro de Ativo (Novo)
+        // Filtro de Ativo
         if (selectedAsset) {
             const hasAsset = (os.assets && os.assets.includes(selectedAsset)) || 
                              ((os as any).assetName === selectedAsset);
@@ -115,15 +118,10 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
         // Filtro de Técnico
         if (selectedTechnician && os.technicianId !== selectedTechnician) return false;
         
-        // Filtro de Cliente (apenas se usina não estiver selecionada)
-        if (selectedClient && !selectedPlant) {
-            const plant = plants.find(p => p.id === os.plantId);
-            if (plant?.client !== selectedClient) return false;
-        }
         return true;
     });
     return list;
-  }, [osList, user, selectedYear, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants, filterOSForUser]);
+  }, [osList, user, selectedYear, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants, availablePlants, filterOSForUser]);
 
   // --- GERAÇÃO DA ESTRUTURA DE SEMANAS ---
   const weeks = useMemo(() => {
@@ -162,7 +160,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
     return grouped;
   }, [visibleOS, selectedYear]);
 
-  // --- HANDLERS DE AÇÃO ---
+  // --- HANDLERS DE AÇÃO (RESTAURADOS) ---
   
   const toggleSelection = (id: string) => {
       setSelectedOSIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -218,24 +216,14 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
         <div className="flex flex-wrap gap-2 items-center">
             <span className="text-sm font-bold text-gray-700 dark:text-gray-300 mr-2">Filtros:</span>
             <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className={selectClass}>{years.map(y => <option key={y} value={y}>{y}</option>)}</select>
-            <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}><option value="">Todos Clientes</option>{clients.map(c => <option key={c} value={c}>{c}</option>)}</select>
-            <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}><option value="">Todas Usinas</option>{filteredPlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}><option value="">Todos Clientes</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select>
+            <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}><option value="">Todas Usinas</option>{availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
             <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={selectClass}><option value="">Todas Prioridades</option>{Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}</select>
-            
-            {/* Filtro de Ativo (Novo) */}
-            <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={selectClass}>
-                <option value="">Todos Ativos</option>
-                {uniqueAssets.map(a => <option key={a} value={a}>{a}</option>)}
-            </select>
-
-            {/* Filtro de Técnico (Filtrado por Usina) */}
-            <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}>
-                <option value="">Todos Técnicos</option>
-                {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={selectClass}><option value="">Todos Ativos</option>{uniqueAssets.map(a => <option key={a} value={a}>{a}</option>)}</select>
+            <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}><option value="">Todos Técnicos</option>{availableUsers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
         </div>
 
-        {/* --- BOTÕES DE AÇÃO --- */}
+        {/* --- BOTÕES DE AÇÃO (RESTAURADOS) --- */}
         <div className="flex gap-2">
             {canManage && (
                 <>
@@ -268,7 +256,6 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick }
       <div className="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-13 gap-2 overflow-y-auto flex-1 pr-2">
         {weeks.map(w => {
             const items = osByWeek[w.weekNumber] || [];
-            // Limite de visualização por célula para não quebrar o layout
             const visibleLimit = 3;
             const visibleItems = items.slice(0, visibleLimit);
             const hiddenCount = items.length - visibleLimit;

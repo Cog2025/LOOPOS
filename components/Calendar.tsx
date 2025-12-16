@@ -5,7 +5,6 @@ import React, { useState, useMemo } from 'react';
 import { OS, Priority, Role } from '../types'; 
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
-import { OS_ACTIVITIES } from '../constants';
 import Modal from './modals/Modal';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -38,30 +37,40 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
   const [selectedAsset, setSelectedAsset] = useState('');
   const [selectedTechnician, setSelectedTechnician] = useState('');
 
-  // Relatório
+  // Relatório (Restaurado)
   const [reportStartDate, setReportStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [reportEndDate, setReportEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false); // ✅ NOVO ESTADO
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const [moreInfoModal, setMoreInfoModal] = useState<{ isOpen: boolean; title: string; items: OS[] }>({
       isOpen: false, title: '', items: []
   });
 
-  // Helpers
-  const clients = Array.from(new Set(plants.map(p => p.client))).sort();
-  const filteredPlants = selectedClient ? plants.filter(p => p.client === selectedClient) : plants;
-  
-  const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || id;
-  const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'N/A';
+  // --- FILTROS DE SEGURANÇA (MANTIDOS) ---
+  const availablePlants = useMemo(() => {
+      const filtered = plants.filter(plant => {
+          if (!user) return false;
+          if ([Role.ADMIN, Role.OPERATOR].includes(user.role)) return true;
+          return user.plantIds?.includes(plant.id);
+      });
+      return filtered.sort((a,b) => a.name.localeCompare(b.name));
+  }, [plants, user]);
 
-  const technicians = useMemo(() => {
-    return users.filter(u => {
-      if (u.role !== Role.TECHNICIAN) return false;
-      if ((user?.role === Role.ADMIN || user?.role === Role.OPERATOR) && !selectedPlant) return true;
-      if (selectedPlant) return u.plantIds && u.plantIds.includes(selectedPlant);
-      return true;
-    });
-  }, [users, selectedPlant, user?.role]);
+  const availableUsers = useMemo(() => {
+      if (!user) return [];
+      if ([Role.ADMIN, Role.OPERATOR].includes(user.role)) return users;
+      const myPlantIds = user.plantIds || [];
+      return users.filter(targetUser => {
+          const targetPlants = targetUser.plantIds || [];
+          return targetPlants.some(pId => myPlantIds.includes(pId));
+      }).sort((a,b) => a.name.localeCompare(b.name));
+  }, [users, user]);
+
+  // Filtro de Clientes baseado nas usinas disponíveis
+  const availableClients = useMemo(() => {
+      const clients = new Set(availablePlants.map(p => p.client || 'Indefinido'));
+      return Array.from(clients).sort();
+  }, [availablePlants]);
 
   const uniqueAssets = useMemo(() => {
     const assetsSet = new Set<string>();
@@ -72,29 +81,93 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     return Array.from(assetsSet).sort();
   }, [osList]);
 
-  const visibleOS = useMemo(() => {
-    let list = user ? filterOSForUser(user) : osList;
-    list = list.filter(os => {
+  // Helpers
+  const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || id;
+  const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'N/A';
+
+  const daysInMonth = useMemo(() => {
+    const start = startOfMonth(currentDate);
+    const end = endOfMonth(currentDate);
+    const days: DayInfo[] = [];
+
+    const startDay = start.getDay(); 
+    const prevMonthEnd = new Date(start.getFullYear(), start.getMonth(), 0).getDate();
+
+    for (let i = startDay - 1; i >= 0; i--) {
+      days.push({
+        date: new Date(start.getFullYear(), start.getMonth() - 1, prevMonthEnd - i),
+        isCurrentMonth: false,
+        dayNumber: prevMonthEnd - i
+      });
+    }
+
+    for (let i = 1; i <= end.getDate(); i++) {
+      days.push({
+        date: new Date(start.getFullYear(), start.getMonth(), i),
+        isCurrentMonth: true,
+        dayNumber: i
+      });
+    }
+
+    const remaining = 42 - days.length;
+    for (let i = 1; i <= remaining; i++) {
+      days.push({
+        date: new Date(start.getFullYear(), start.getMonth() + 1, i),
+        isCurrentMonth: false,
+        dayNumber: i
+      });
+    }
+
+    return days;
+  }, [currentDate]);
+
+  const filteredOS = useMemo(() => {
+    return osList.filter(os => {
+        const plant = plants.find(p => p.id === os.plantId);
+        
+        if (selectedClient && plant?.client !== selectedClient) return false;
         if (selectedPlant && os.plantId !== selectedPlant) return false;
+        
+        // Segurança: Bloqueia se a usina não estiver na lista permitida
+        if (!availablePlants.find(p => p.id === os.plantId)) return false;
+
         if (selectedPriority && os.priority !== selectedPriority) return false;
+        
         if (selectedAsset) {
              const hasAsset = (os.assets && os.assets.includes(selectedAsset)) || 
                               ((os as any).assetName === selectedAsset);
              if (!hasAsset) return false;
         }
+
         if (selectedTechnician && os.technicianId !== selectedTechnician) return false;
-        if (selectedClient && !selectedPlant) {
-            const plant = plants.find(p => p.id === os.plantId);
-            if (plant?.client !== selectedClient) return false;
-        }
+        
         return true;
     });
-    return list;
-  }, [osList, user, filterOSForUser, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants]);
+  }, [osList, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants, availablePlants]);
 
-  // --- DOWNLOAD PDF CORRIGIDO ---
+  const getDayOS = (date: Date) => {
+    return filteredOS.filter(os => {
+        const osDate = parseISO(os.startDate.split('T')[0]);
+        return isSameDay(osDate, date);
+    });
+  };
+
+  const getPriorityColor = (priority: string) => {
+      switch (priority) {
+          case Priority.URGENT: return 'bg-red-500 border-red-700';
+          case Priority.HIGH: return 'bg-orange-500 border-orange-700';
+          case Priority.MEDIUM: return 'bg-yellow-500 border-yellow-700 text-black'; 
+          case Priority.LOW: return 'bg-green-500 border-green-700';
+          default: return 'bg-blue-500 border-blue-700';
+      }
+  };
+
+  const handlePrevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+  const handleNextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+
+  // --- DOWNLOAD PDF RESTAURADO ---
   const handleDownloadReport = async (type: 'summary' | 'complete') => {
-    const reportData = visibleOS.filter(os => {
+    const reportData = filteredOS.filter(os => {
       const osDate = new Date(os.startDate);
       const start = parseISO(reportStartDate);
       const end = parseISO(reportEndDate);
@@ -108,18 +181,18 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     }
 
     if (type === 'complete') {
-        setIsGeneratingPDF(true); // ✅ Ativa loading
+        setIsGeneratingPDF(true);
         try {
             await generateOSReport(
                 reportData, 
                 "Relatório Completo de Manutenção",
-                { getPlantName, getUserName }
+                { getPlantName, getUserName } as any // Type assertion para evitar erro de tipagem estrita
             );
         } catch (e) {
             console.error(e);
             alert("Erro ao gerar PDF.");
         } finally {
-            setIsGeneratingPDF(false); // ✅ Desativa loading
+            setIsGeneratingPDF(false);
         }
     } else {
         // --- RELATÓRIO RESUMIDO ---
@@ -140,7 +213,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
                 getPlantName(os.plantId),
                 assetName,
                 os.activity,
-                getUserName(os.technicianId),
+                getUserName(os.technicianId || ''),
                 os.status
             ];
         });
@@ -167,91 +240,52 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     }
   };
 
-  const calendarDays = useMemo<DayInfo[]>(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDayOfWeek = firstDay.getDay();
-    
-    const days: DayInfo[] = [];
-    const prevMonthLastDay = new Date(year, month, 0).getDate();
-
-    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
-      days.push({ date: new Date(year, month - 1, prevMonthLastDay - i), isCurrentMonth: false, dayNumber: prevMonthLastDay - i });
-    }
-    for (let day = 1; day <= daysInMonth; day++) {
-      days.push({ date: new Date(year, month, day), isCurrentMonth: true, dayNumber: day });
-    }
-    const remainingDays = 42 - days.length;
-    for (let day = 1; day <= remainingDays; day++) {
-      days.push({ date: new Date(year, month + 1, day), isCurrentMonth: false, dayNumber: day });
-    }
-    return days;
-  }, [currentDate]);
-
-  const osByDate = useMemo(() => {
-    const grouped: Record<string, OS[]> = {};
-    visibleOS.forEach(os => {
-      if (os.startDate) {
-        const osDate = new Date(os.startDate);
-        const dateKey = `${osDate.getFullYear()}-${osDate.getMonth()}-${osDate.getDate()}`;
-        if (!grouped[dateKey]) grouped[dateKey] = [];
-        grouped[dateKey].push(os);
-      }
-    });
-    return grouped;
-  }, [visibleOS]);
-
-  const getOSsForDate = (date: Date): OS[] => {
-    const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-    return osByDate[dateKey] || [];
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case Priority.URGENT: return 'bg-red-500 border-l-4 border-red-700 text-white';
-      case Priority.HIGH: return 'bg-orange-500 border-l-4 border-orange-700 text-white';
-      case Priority.MEDIUM: return 'bg-yellow-500 border-l-4 border-yellow-700 text-white';
-      case Priority.LOW: return 'bg-green-500 border-l-4 border-green-700 text-white';
-      default: return 'bg-gray-500 border-l-4 border-gray-700 text-white';
-    }
-  };
-
-  const handleShowMore = (date: Date, items: OS[]) => {
-      setMoreInfoModal({ isOpen: true, title: `OSs do dia ${date.toLocaleDateString()}`, items: items });
-  };
-
   const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1 px-2";
 
   return (
-    <div className="h-full flex flex-col p-4 bg-gray-50 dark:bg-gray-900 space-y-4">
+    <div className="h-full flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">
       
       {/* 1. BARRA DE FILTROS */}
-      <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm flex flex-wrap gap-3 items-center justify-between">
+      <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm m-4 mb-2 flex flex-wrap gap-3 items-center justify-between">
         <div className="flex flex-wrap gap-2 items-center">
             <span className="text-sm font-bold text-gray-700 dark:text-gray-300 mr-2 flex items-center">
                 <Filter className="w-4 h-4 mr-1" /> Filtros:
             </span>
-            <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}><option value="">Todos Clientes</option>{clients.map(c => <option key={c} value={c}>{c}</option>)}</select>
-            <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}><option value="">Todas Usinas</option>{filteredPlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-            <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={selectClass}><option value="">Todas Prioridades</option>{Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}</select>
-            <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={selectClass}><option value="">Todos Ativos</option>{uniqueAssets.map(a => <option key={a} value={a}>{a}</option>)}</select>
-            <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}><option value="">Todos Técnicos</option>{technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+            <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}>
+                <option value="">Todos Clientes</option>
+                {availableClients.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}>
+                <option value="">Todas Usinas</option>
+                {availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={selectClass}>
+                <option value="">Todas Prioridades</option>
+                {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={selectClass}>
+                <option value="">Todos Ativos</option>
+                {uniqueAssets.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}>
+                <option value="">Todos Técnicos</option>
+                {availableUsers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
         </div>
       </div>
 
-      {/* 2. BARRA DE RELATÓRIOS E NAVEGAÇÃO */}
-      <div className="bg-blue-50 dark:bg-slate-800 border border-blue-100 dark:border-slate-700 p-3 rounded-lg flex flex-col md:flex-row items-center justify-between gap-4">
+      {/* 2. BARRA DE NAVEGAÇÃO E RELATÓRIOS (Restaurada) */}
+      <div className="bg-blue-50 dark:bg-slate-800 border border-blue-100 dark:border-slate-700 p-3 m-4 mt-0 rounded-lg flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-1 hover:bg-gray-200 rounded text-gray-600 dark:text-gray-300"><ChevronLeft className="w-5 h-5" /></button>
+                <button onClick={handlePrevMonth} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-300"><ChevronLeft className="w-5 h-5" /></button>
                 <span className="font-bold text-lg text-gray-800 dark:text-gray-200 w-40 text-center capitalize">{format(currentDate, 'MMMM yyyy', { locale: ptBR })}</span>
-                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="p-1 hover:bg-gray-200 rounded text-gray-600 dark:text-gray-300"><ChevronRight className="w-5 h-5" /></button>
+                <button onClick={handleNextMonth} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-300"><ChevronRight className="w-5 h-5" /></button>
                 <button onClick={() => setCurrentDate(new Date())} className="text-xs text-blue-600 hover:underline ml-2">Hoje</button>
             </div>
         </div>
+        
+        {/* ÁREA DE RELATÓRIOS RESTAURADA */}
         <div className="flex items-center gap-3">
              <div className="flex flex-col md:flex-row items-center gap-2 text-sm">
                 <span className="font-medium text-gray-600 dark:text-gray-400">Relatório de:</span>
@@ -262,10 +296,9 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
              <div className="h-8 w-px bg-gray-300 mx-2 hidden md:block"></div>
              
              <button onClick={() => handleDownloadReport('summary')} className="flex items-center gap-1 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs hover:bg-gray-50 transition-colors">
-                <FileText className="w-4 h-4" /> Resumido
+                <FileText className="w-4 h-4" /> Baixar relatório resumido
              </button>
              
-             {/* ✅ BOTÃO COM ESTADO CORRETO */}
              <button 
                 onClick={() => handleDownloadReport('complete')} 
                 disabled={isGeneratingPDF}
@@ -275,7 +308,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
                     <span className="animate-pulse">Gerando...</span>
                 ) : (
                     <>
-                        <Download className="w-4 h-4" /> Completo
+                        <Download className="w-4 h-4" /> Baixar relatório completo
                     </>
                 )}
              </button>
@@ -283,34 +316,46 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
       </div>
 
       {/* Grid do Calendário */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border dark:border-gray-700 flex-1">
-        <div className="grid grid-cols-7 border-b border-gray-300 dark:border-gray-700">
-          {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
-            <div key={day} className="p-2 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700">{day}</div>
+      <div className="flex-1 p-4 pt-0 overflow-hidden">
+        <div className="grid grid-cols-7 gap-1 h-full min-h-[500px]">
+          {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
+            <div key={d} className="text-center font-bold text-gray-500 py-2 bg-gray-200 dark:bg-gray-700 rounded-t">{d}</div>
           ))}
-        </div>
-        <div className="grid grid-cols-7 auto-rows-fr h-full overflow-y-auto">
-          {calendarDays.map((dayData, index) => {
-            const osListForDay = getOSsForDate(dayData.date);
-            const isToday = dayData.date.toDateString() === new Date().toDateString();
+          
+          {daysInMonth.map((day, idx) => {
+            const dayOS = getDayOS(day.date);
+            const isToday = isSameDay(day.date, new Date());
+            
             return (
-              <div key={index} className={`min-h-[100px] border border-gray-200 dark:border-gray-700 p-2 ${dayData.isCurrentMonth ? 'bg-white dark:bg-gray-800' : 'bg-gray-50 dark:bg-gray-900 opacity-50'} ${isToday ? 'ring-1 ring-blue-500' : ''}`}>
-                <div className={`text-xs font-semibold mb-1 flex justify-between ${isToday ? 'text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                    <span>{dayData.dayNumber}</span>
-                    {osListForDay.length > 0 && <span className="text-[10px] bg-gray-200 dark:bg-gray-700 px-1 rounded">{osListForDay.length}</span>}
-                </div>
-                <div className="space-y-1">
-                  {osListForDay.slice(0, 3).map(os => (
-                    <div key={os.id} onClick={() => onCardClick(os)} className={`p-1 rounded text-[10px] cursor-pointer hover:opacity-80 text-white truncate shadow-sm ${getPriorityColor(os.priority)}`} title={`${getPlantName(os.plantId)} - ${os.activity}`}>
-                      <span className="font-bold mr-1">{(os as any).assetName || (os.assets[0] || 'Geral')}:</span>
-                      {os.activity}
-                    </div>
-                  ))}
-                  {osListForDay.length > 3 && (
-                    <div className="text-[10px] text-gray-500 dark:text-gray-400 cursor-pointer hover:text-blue-500 text-center" onClick={(e) => { e.stopPropagation(); handleShowMore(dayData.date, osListForDay); }}>
-                        +{osListForDay.length - 3} mais
-                    </div>
-                  )}
+              <div 
+                key={idx} 
+                className={`
+                    border dark:border-gray-700 rounded p-1 flex flex-col relative overflow-hidden transition-colors
+                    ${day.isCurrentMonth ? 'bg-white dark:bg-gray-800' : 'bg-gray-100 dark:bg-gray-900 opacity-50'}
+                    ${isToday ? 'ring-2 ring-blue-500' : ''}
+                `}
+              >
+                <span className={`text-xs font-bold mb-1 ml-1 ${isToday ? 'text-blue-600' : 'text-gray-700 dark:text-gray-300'}`}>{day.dayNumber}</span>
+                
+                <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
+                    {dayOS.slice(0, 3).map(os => (
+                        <div 
+                            key={os.id} 
+                            onClick={() => onCardClick(os)}
+                            className={`text-[10px] p-1 rounded text-white cursor-pointer truncate border-l-4 shadow-sm hover:opacity-80 ${getPriorityColor(os.priority)}`}
+                            title={`${os.title} - ${plants.find(p => p.id === os.plantId)?.name}`}
+                        >
+                            {os.activity || os.title}
+                        </div>
+                    ))}
+                    {dayOS.length > 3 && (
+                        <button 
+                            onClick={() => setMoreInfoModal({ isOpen: true, items: dayOS, title: `OSs do dia ${day.dayNumber}` })}
+                            className="text-[10px] w-full text-center text-blue-600 dark:text-blue-400 hover:underline font-bold"
+                        >
+                            + {dayOS.length - 3} mais
+                        </button>
+                    )}
                 </div>
               </div>
             );

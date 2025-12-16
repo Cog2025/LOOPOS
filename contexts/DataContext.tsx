@@ -283,17 +283,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const updateTemplate = async (id: string, data: any) => { await api(`/api/maintenance/templates/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); await fetchTaskTemplates(); };
   const deleteTemplate = async (id: string) => { await api(`/api/maintenance/templates/${id}`, { method: 'DELETE' }); await fetchTaskTemplates(); };
 
+  // ✅ FILTRO DE SEGURANÇA CORRIGIDO PARA AUXILIARES
   const filterOSForUser = (u: User): OS[] => {
-    if (u.role === Role.ADMIN || u.role === Role.OPERATOR) return osList;
-    if (u.role === Role.TECHNICIAN) return osList.filter(o => o.technicianId === u.id);
-    if (u.role === Role.CLIENT || u.role === Role.COORDINATOR || u.role === Role.SUPERVISOR) {
-        const normalizedUserName = u.name.trim().toLowerCase();
+    if ([Role.ADMIN, Role.OPERATOR].includes(u.role)) return osList;
+    
+    // ✅ CORREÇÃO: Agora inclui AUXILIARES e verifica o campo assistantId
+    if (u.role === Role.TECHNICIAN || u.role === Role.ASSISTANT) {
+        return osList.filter(o => o.technicianId === u.id || o.assistantId === u.id);
+    }
+
+    if ([Role.CLIENT, Role.COORDINATOR, Role.SUPERVISOR].includes(u.role)) {
+        const norm = u.name.trim().toLowerCase();
         return osList.filter(o => {
-            const plant = plants.find(p => p.id === o.plantId);
-            if (!plant) return false;
-            const idMatch = u.plantIds && u.plantIds.includes(plant.id);
-            const nameMatch = u.role === Role.CLIENT && plant.client && plant.client.trim().toLowerCase() === normalizedUserName;
-            return idMatch || nameMatch;
+            const p = plants.find(pl => pl.id === o.plantId);
+            return (p && u.plantIds && u.plantIds.includes(p.id)) || 
+                   (p && u.role === Role.CLIENT && p.client?.trim().toLowerCase() === norm);
         });
     }
     return [];
@@ -370,6 +374,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const res = await api('/api/os/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batchPayload) });
         if (!res.ok) throw new Error();
         await reloadFromAPI(); 
+        
         // Notifica em lote
         batchPayload.forEach((os: any) => { 
             if(os.technicianId) pushNotification(os.technicianId, `Nova OS atribuída: ${os.title}`);
