@@ -1,3 +1,5 @@
+//File: components/MaintenancePlans.tsx
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,7 +22,6 @@ const MaintenancePlans: React.FC = () => {
   const [showCustomWizard, setShowCustomWizard] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
-  // Estados de Expansão
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set()); 
   const [expandedAssets, setExpandedAssets] = useState<Set<string>>(new Set());
 
@@ -67,7 +68,6 @@ const MaintenancePlans: React.FC = () => {
 
   const planData = maintenancePlans[selectedPlantId] || [];
 
-  // --- AGRUPAMENTO POR ATIVO (Restaurado) ---
   const tasksByAsset = useMemo(() => {
     const groups: Record<string, PlantMaintenancePlan[]> = {};
     planData.forEach(task => {
@@ -94,15 +94,105 @@ const MaintenancePlans: React.FC = () => {
     });
   };
 
+  // ✅ NOVA LÓGICA DE PDF APRIMORADA
   const handleDownloadPDF = () => {
-    if (!selectedPlantId) return;
+    if (!selectedPlantId || !currentPlant) return;
     const doc = new jsPDF();
-    const plant = plants.find(p => p.id === selectedPlantId);
-    doc.setFontSize(16);
-    doc.text(`Plano de Manutenção: ${plant?.name}`, 14, 20);
-    const tableData = planData.map(t => [t.asset_category, t.title, t.frequency_days + ' dias', t.subtasks.join(', ')]);
-    autoTable(doc, { startY: 30, head: [['Ativo', 'Tarefa', 'Frequência', 'Checklist']], body: tableData });
-    doc.save(`Plano_${plant?.name}.pdf`);
+    
+    // --- 1. CABEÇALHO E RESUMO DA USINA ---
+    doc.setFontSize(18);
+    doc.setTextColor(40, 40, 40);
+    doc.text(`Plano de Manutenção: ${currentPlant.name}`, 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Cliente: ${currentPlant.client}`, 14, 26);
+    doc.text(`Data de Emissão: ${new Date().toLocaleDateString()}`, 14, 31);
+
+    // Resumo Técnico
+    doc.setDrawColor(200, 200, 200);
+    doc.line(14, 35, 196, 35);
+    
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Resumo da Instalação:', 14, 42);
+    
+    const summaryData = [
+        [`Inversores: ${currentPlant.subPlants.reduce((acc, sp) => acc + sp.inverterCount, 0)}`, 
+         `Strings: ${currentPlant.stringCount}`, 
+         `Trackers: ${currentPlant.trackerCount}`,
+         `Subusinas: ${currentPlant.subPlants.length}`]
+    ];
+
+    autoTable(doc, {
+        startY: 45,
+        head: [],
+        body: summaryData,
+        theme: 'plain',
+        styles: { fontSize: 10, cellPadding: 2 },
+        columnStyles: { 0: { fontStyle: 'bold' }, 1: { fontStyle: 'bold' }, 2: { fontStyle: 'bold' }, 3: { fontStyle: 'bold' } }
+    });
+
+    // --- 2. TABELAS POR ATIVO COM CABEÇALHOS COLORIDOS ---
+    let lastY = (doc as any).lastAutoTable.finalY + 10;
+
+    // Paleta de cores para os cabeçalhos
+    const headerColors = [
+        [41, 128, 185],  // Azul
+        [39, 174, 96],   // Verde
+        [230, 126, 34],  // Laranja
+        [142, 68, 173],  // Roxo
+        [192, 57, 43],   // Vermelho
+        [52, 73, 94]     // Cinza Escuro
+    ];
+    let colorIndex = 0;
+
+    Object.entries(tasksByAsset).forEach(([assetName, tasks]) => {
+        // Seleciona cor cíclica
+        const [r, g, b] = headerColors[colorIndex % headerColors.length];
+        colorIndex++;
+
+        // Título do Grupo
+        doc.setFontSize(12);
+        doc.setTextColor(r, g, b);
+        doc.text(assetName.toUpperCase(), 14, lastY);
+        
+        const tableBody = tasks.map(t => [
+            t.title,
+            `${t.frequency_days} dias`,
+            // Formata subtarefas como "1) ... 2) ..."
+            t.subtasks.map((s, i) => `${i + 1}) ${s}`).join('\n')
+        ]);
+
+        autoTable(doc, {
+            startY: lastY + 2,
+            head: [['Tarefa', 'Frequência', 'Subtarefas']],
+            body: tableBody,
+            theme: 'grid',
+            headStyles: { fillColor: [r, g, b], textColor: 255, fontStyle: 'bold' },
+            styles: { fontSize: 9, cellPadding: 3, overflow: 'linebreak' },
+            columnStyles: {
+                0: { cellWidth: 60, fontStyle: 'bold' }, // Tarefa
+                1: { cellWidth: 25 }, // Frequência
+                2: { cellWidth: 'auto' } // Subtarefas
+            },
+            didDrawPage: (data) => {
+                // Se quebrar página, atualiza o Y para não sobrepor
+                lastY = data.cursor.y; 
+            }
+        });
+
+        // Atualiza Y para a próxima tabela
+        lastY = (doc as any).lastAutoTable.finalY + 10;
+        
+        // Verifica se precisa de nova página para o próximo título
+        if (lastY > 270) {
+            doc.addPage();
+            lastY = 20;
+        }
+    });
+
+    doc.save(`Plano_${currentPlant.name}.pdf`);
   };
 
   const handleSaveTask = async () => {
@@ -164,8 +254,6 @@ const MaintenancePlans: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900 p-6 overflow-hidden">
-      
-      {/* HEADER */}
       <div className="flex justify-between items-center mb-6 shrink-0">
         <div>
             <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
@@ -176,7 +264,6 @@ const MaintenancePlans: React.FC = () => {
         </div>
       </div>
 
-      {/* TOOLBAR (Filtros + Botões Restaurados) */}
       <div className="flex flex-col md:flex-row gap-4 justify-between items-end bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 shrink-0 mb-6">
         <div className="flex gap-4 flex-1 w-full md:w-auto">
             <div className="w-1/2 md:w-64">
@@ -245,7 +332,6 @@ const MaintenancePlans: React.FC = () => {
         </div>
       </div>
 
-      {/* CONTENT AREA */}
       <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col">
         {!selectedPlantId ? (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 opacity-60">
@@ -280,7 +366,6 @@ const MaintenancePlans: React.FC = () => {
             </div>
         ) : (
             <div className="flex-1 overflow-y-auto p-4">
-                {/* Admin Add Asset */}
                 {canEditImplemented && (
                     <div className="mb-4 flex justify-end">
                         {isAddingAsset ? (
@@ -306,15 +391,10 @@ const MaintenancePlans: React.FC = () => {
                     </div>
                 )}
 
-                {/* ✅ AGRUPAMENTO POR ATIVOS (Restaurado e Corrigido) */}
                 {Object.entries(tasksByAsset).map(([asset, tasks]) => {
-                    // Estado para controlar expansão do grupo de ativos
                     const isAssetExpanded = expandedAssets.has(asset);
-                    
                     return (
                         <div key={asset} className="mb-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden shadow-sm">
-                            
-                            {/* CABEÇALHO DO GRUPO (Cor Escura para destaque, como na imagem) */}
                             <div 
                                 className="flex items-center justify-between p-3 bg-gray-800 text-white cursor-pointer hover:bg-gray-700 transition-colors"
                                 onClick={() => toggleAsset(asset)}
@@ -337,7 +417,6 @@ const MaintenancePlans: React.FC = () => {
                                 )}
                             </div>
 
-                            {/* LISTA DE TAREFAS DENTRO DO GRUPO */}
                             {isAssetExpanded && (
                                 <div className="bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700">
                                     {tasks.map(task => (
@@ -351,7 +430,6 @@ const MaintenancePlans: React.FC = () => {
                                                     <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400 mt-1">
                                                         <span className="flex items-center gap-1">🔄 {task.frequency_days} dias</span>
                                                         <span className="flex items-center gap-1">⚠️ {task.criticality}</span>
-                                                        <span className="flex items-center gap-1">🏷️ {task.task_type}</span>
                                                     </div>
                                                 </div>
 

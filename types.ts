@@ -1,7 +1,5 @@
-// File: src/types.ts
-// Este arquivo centraliza todas as definições de tipos e interfaces TypeScript para garantir consistência e segurança de tipo em toda a aplicação.
-
-// Definições globais de tipos
+// File: types.ts
+// Este arquivo centraliza todas as definições de tipos e interfaces TypeScript.
 
 export enum Role {
   ADMIN = "Admin",
@@ -40,9 +38,8 @@ export interface User {
     plantIds?: string[];
 }
 
-// ✅ ESTRUTURA DE SUBUSINAS
 export interface SubPlant {
-    id: string; // UUID ou ID simples (para compatibilidade com legado)
+    id: string; 
     name: string;
     inverterCount: number;
     trackersPerInverter: number;
@@ -53,13 +50,10 @@ export interface Plant {
     id: string;
     client: string;
     name: string;
-    assets: string[]; // Lista de ativos (ex: "Inversores", "Jardinagem")
-    subPlants: SubPlant[]; // ✅ Lista de subusinas
-    
-    // Contagem total (calculada ou manual)
+    assets: string[];
+    subPlants: SubPlant[];
     stringCount: number;
     trackerCount: number;
-    
     coordinatorId?: string | null;
     supervisorIds?: string[];
     technicianIds?: string[];
@@ -89,8 +83,6 @@ export interface SubtaskItem {
     comment?: string;
 }
 
-// ✅ NOVA INTERFACE ADICIONADA PARA CORRIGIR O ERRO
-// Representa uma sessão de trabalho em uma OS (Início -> Pausa/Fim)
 export interface ExecutionSession {
     sessionId: string;
     userId: string;
@@ -98,7 +90,7 @@ export interface ExecutionSession {
     startTime: string;
     endTime: string;
     durationSeconds: number;
-    completedSubtasks: string[]; // Lista de textos das subtarefas feitas nesta sessão
+    completedSubtasks: string[];
 }
 
 export interface OS {
@@ -108,34 +100,34 @@ export interface OS {
     status: OSStatus;
     priority: Priority;
     
-    // ✅ LOCALIZAÇÃO PRECISA
     plantId: string;
-    subPlantId?: string; // Opcional (pode ser na usina toda)
-    inverterId?: string; // Opcional (pode ser num inversor específico)
+    subPlantId?: string;
+    inverterId?: string;
     
     technicianId: string;
     supervisorId: string;
+    // ✅ NOVO CAMPO: Auxiliar
+    assistantId?: string; 
+    
     startDate: string;
     endDate?: string;
     createdAt: string;
     updatedAt: string;
     activity: string;
-    assets: string[]; // Categorias (ex: "Inversores")
+    assets: string[]; 
     
     logs: OSLog[];
     attachmentsEnabled: boolean;
     imageAttachments: ImageAttachment[];
     
-    // Execução
     executionStart?: string;
     executionTimeSeconds?: number;
-    currentExecutorId?: string | null; // Quem está travando a OS no momento
-    executionHistory?: ExecutionSession[]; // ✅ Histórico detalhado de sessões
+    currentExecutorId?: string | null; 
+    executionHistory?: ExecutionSession[]; 
     isInReview?: boolean;
     subtasksStatus?: SubtaskItem[]; 
     maintenancePlanId?: string;
 
-    // Metadados do Plano
     classification1?: string;
     classification2?: string;
     plannedDowntime?: number;

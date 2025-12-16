@@ -22,27 +22,34 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   const [showExecutionModal, setShowExecutionModal] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // Helpers para exibir nomes
   const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'N/A';
   const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || id;
 
+  const currentPlant = plants.find(p => p.id === os.plantId);
+  const coordinatorName = getUserName(currentPlant?.coordinatorId || '');
   const technicianName = getUserName(os.technicianId || '');
+  const supervisorName = getUserName(os.supervisorId || '');
+  const assistantName = os.assistantId ? getUserName(os.assistantId) : 'Não atribuído';
 
-  // Lógica de Permissão de Execução
+  // ✅ Helper para exibir o ativo específico
+  const getSpecificAsset = () => {
+      let details = os.assets?.[0] || 'Geral';
+      
+      if (os.inverterId) {
+          details += ` — ${os.inverterId}`; // Ex: Inversores — INV 1.02
+      } else if (os.subPlantId) {
+          details += ` (Sub-usina ${os.subPlantId})`;
+      }
+      return details;
+  };
+
   const canExecute = useMemo(() => {
       if (!user) return false;
-      
-      // 1. Clientes nunca executam
       if (user.role === Role.CLIENT) return false;
-
-      // 2. Admin e Operador podem executar qualquer uma (Supervisão)
       if (user.role === Role.ADMIN || user.role === Role.OPERATOR) return true;
-
-      // 3. Técnicos só executam se forem o responsável atribuído
       if (user.role === Role.TECHNICIAN) {
           return user.id === os.technicianId;
       }
-
       return false;
   }, [user, os]);
 
@@ -56,7 +63,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   const handleAddLog = (e: React.FormEvent) => {
       e.preventDefault();
       if(newLog.trim()) {
-          // ✅ CORREÇÃO: Passa um objeto conforme esperado pela interface OSLog
           addOSLog(os.id, {
               authorId: user?.id || 'Sistema',
               comment: newLog
@@ -69,7 +75,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
       setIsDownloading(true);
       try {
           const helpers = { getPlantName, getUserName };
-          // Passamos a OS como array [os] para o gerador
           await generateOSReport([os], `OS ${os.id}`, helpers, true);
       } catch (e) {
           console.error(e);
@@ -91,7 +96,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
       <>
         <Modal isOpen={isOpen} onClose={onClose} title={`Detalhes da OS: ${os.title}`}>
             <div className="space-y-4 p-1">
-            {/* Header de Status e Ações Rápidas */}
             <div className="flex justify-between items-start bg-gray-50 dark:bg-gray-700/50 p-3 rounded-lg border border-gray-200 dark:border-gray-600">
                 <div>
                     <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${os.status === 'Concluído' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
@@ -104,10 +108,9 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                     <button onClick={handleDownload} disabled={isDownloading} className="p-2 text-gray-600 hover:text-blue-600 hover:bg-white rounded-full transition-colors" title="Baixar PDF">
                         <Download size={18} />
                     </button>
-                    {/* Apenas Admin/Operador edita ou deleta */}
                     {(user?.role === Role.ADMIN || user?.role === Role.OPERATOR) && (
                         <>
-                            <button onClick={() => { onEdit(); onClose(); }} className="p-2 text-gray-600 hover:text-orange-600 hover:bg-white rounded-full transition-colors" title="Editar">
+                            <button onClick={onEdit} className="p-2 text-gray-600 hover:text-orange-600 hover:bg-white rounded-full transition-colors" title="Editar">
                                 <Edit size={18} />
                             </button>
                             <button onClick={handleDelete} className="p-2 text-gray-600 hover:text-red-600 hover:bg-white rounded-full transition-colors" title="Excluir">
@@ -118,7 +121,22 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 text-sm bg-white dark:bg-gray-800 p-3 rounded border dark:border-gray-700">
+                {/* ✅ NOVO CAMPO: ATIVO */}
+                <div className="col-span-2">
+                    <label className="block text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Ativo / Equipamento</label>
+                    <span className="font-bold text-gray-900 dark:text-white text-base">{getSpecificAsset()}</span>
+                </div>
+                <div className="border-t col-span-2 my-1 dark:border-gray-600"></div>
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase">Coordenador</label>
+                    <span className="dark:text-gray-200">{coordinatorName}</span>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase">Supervisor</label>
+                    <span className="dark:text-gray-200">{supervisorName}</span>
+                </div>
                 <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase">Técnico Responsável</label>
                     <div className="flex items-center gap-2 mt-1">
@@ -127,16 +145,17 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                     </div>
                 </div>
                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase">Auxiliar</label>
+                    <span className="dark:text-gray-200">{assistantName}</span>
+                </div>
+                <div className="border-t col-span-2 my-1 dark:border-gray-600"></div>
+                <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase">Prioridade</label>
                     <span className={`mt-1 inline-block ${os.priority === 'Alta' || os.priority === 'Urgente' ? 'text-red-600 font-bold' : 'text-gray-700 dark:text-gray-300'}`}>{os.priority}</span>
                 </div>
                 <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase">Data Agendada</label>
                     <span className="dark:text-gray-300">{new Date(os.startDate).toLocaleDateString()}</span>
-                </div>
-                <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase">Duração Estimada</label>
-                    <span className="dark:text-gray-300">{os.estimatedDuration ? `${os.estimatedDuration} min` : '-'}</span>
                 </div>
             </div>
 
@@ -147,7 +166,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                 </div>
             )}
 
-            {/* GALERIA DE FOTOS (Visualização Rápida) */}
             {os.imageAttachments && os.imageAttachments.length > 0 && (
                 <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Evidências Anexadas ({os.imageAttachments.length})</label>
@@ -186,7 +204,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                 </form>
             </div>
 
-            {/* AREA DE AÇÃO PRINCIPAL */}
             <div className="pt-4 mt-2 border-t dark:border-gray-700">
                 {os.status === 'Concluído' ? (
                     <div className="bg-green-100 text-green-800 p-3 rounded text-center font-bold flex items-center justify-center gap-2">

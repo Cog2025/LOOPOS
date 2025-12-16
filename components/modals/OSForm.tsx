@@ -22,7 +22,6 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({ options, value, onC
     const inputRef = useRef<HTMLInputElement>(null);
 
     const selectedLabel = options.find(o => o.value === value)?.label || '';
-
     const normalize = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
     useEffect(() => {
@@ -99,7 +98,8 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
 
   const [formData, setFormData] = useState({
     description: '', status: OSStatus.PENDING, priority: Priority.MEDIUM,
-    plantId: '', subPlantId: '', inverterId: '', technicianId: '', supervisorId: '',
+    plantId: '', subPlantId: '', inverterId: '', 
+    technicianId: '', supervisorId: '', assistantId: '', // ✅ AssistantId adicionado
     startDate: new Date().toISOString().split('T')[0], activity: '', assets: [] as string[],
     subtasksStatus: [] as any[], attachmentsEnabled: true,
     classification1: '', classification2: '', estimatedDuration: 0, plannedDowntime: 0
@@ -118,6 +118,7 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
             description: initialData.description, status: initialData.status, priority: initialData.priority,
             plantId: initialData.plantId, subPlantId: initialData.subPlantId || '', inverterId: initialData.inverterId || '',
             technicianId: initialData.technicianId || '', supervisorId: initialData.supervisorId || '',
+            assistantId: initialData.assistantId || '', // ✅ Carrega auxiliar
             startDate: initialData.startDate, activity: initialData.activity, assets: initialData.assets,
             subtasksStatus: initialData.subtasksStatus || [], attachmentsEnabled: initialData.attachmentsEnabled,
             classification1: initialData.classification1 || '', classification2: initialData.classification2 || '',
@@ -130,18 +131,12 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
 
   useEffect(() => { if (formData.plantId) fetchPlantPlan(formData.plantId); }, [formData.plantId]);
 
-  // --- MEMOS E FILTROS CORRIGIDOS ---
-  // Aqui unimos a ordenação E o filtro de permissões num único lugar
   const availablePlants = useMemo(() => {
-      // 1. Filtrar conforme permissão
       const filtered = plants.filter(plant => {
           if (!user) return false;
-          // Admin e Operador veem todas
           if ([Role.ADMIN, Role.OPERATOR].includes(user.role)) return true;
-          // Outros (Supervisor/Coord) veem apenas as vinculadas
           return user.plantIds?.includes(plant.id);
       });
-      // 2. Ordenar alfabeticamente
       return filtered.sort((a,b) => a.name.localeCompare(b.name));
   }, [plants, user]);
 
@@ -167,10 +162,24 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
       return techs;
   }, [currentPlant, users]);
 
+  // ✅ Lista de Auxiliares da Usina
+  const availableAssistants = useMemo(() => {
+      if (!currentPlant) return [];
+      const assts = (currentPlant.assistantIds || []).map(id => users.find(u => u.id === id)).filter(Boolean);
+      return assts;
+  }, [currentPlant, users]);
+
   const automaticSupervisor = useMemo(() => {
       if (!currentPlant) return null;
       const svId = currentPlant.supervisorIds?.[0];
       return users.find(u => u.id === svId);
+  }, [currentPlant, users]);
+
+  // ✅ Coordenador automático para exibição
+  const automaticCoordinator = useMemo(() => {
+      if (!currentPlant) return null;
+      const coordId = currentPlant.coordinatorId;
+      return users.find(u => u.id === coordId);
   }, [currentPlant, users]);
 
   useEffect(() => {
@@ -273,7 +282,7 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
                             options={availablePlants.map(p => ({ label: p.name, value: p.id }))}
                             value={formData.plantId}
                             onChange={(val) => {
-                                setFormData({...formData, plantId: val, technicianId: '', supervisorId: ''});
+                                setFormData({...formData, plantId: val, technicianId: '', supervisorId: '', assistantId: ''});
                                 setSpecificComponents([]);
                                 setSelectedAssetCategory('');
                                 setSelectedPlanTask('');
@@ -325,7 +334,6 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
                                 </label>
                             ))}
                         </div>
-                        <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-1">Selecionado: {specificComponents.includes('Todos') ? 'Todos' : specificComponents.length > 0 ? specificComponents.join(', ') : 'Nenhum'}</p>
                     </div>
                 )}
 
@@ -340,14 +348,37 @@ const OSForm: React.FC<OSFormProps> = ({ isOpen, onClose, initialData }) => {
                                 placeholder="Selecione o Técnico..."
                              />
                          ) : (
-                             <div className="text-red-600 text-xs mt-2 border border-red-300 bg-red-50 p-2 rounded font-medium">Nenhum técnico atribuído a esta usina.</div>
+                             <div className="text-red-600 text-xs mt-2 border border-red-300 bg-red-50 p-2 rounded font-medium">Nenhum técnico atribuído.</div>
                          )}
                      </div>
+                     {/* ✅ NOVO CAMPO: Auxiliar */}
+                     <div>
+                         <label className={labelClass}>Auxiliar</label>
+                         {availableAssistants.length > 0 ? (
+                             <SearchableSelect 
+                                options={availableAssistants.map(a => ({ label: a.name, value: a.id }))}
+                                value={formData.assistantId}
+                                onChange={(val) => setFormData({...formData, assistantId: val})}
+                                placeholder="Selecione o Auxiliar..."
+                             />
+                         ) : (
+                             <div className="text-gray-500 text-xs mt-2 border border-gray-300 bg-gray-50 p-2 rounded">Nenhum auxiliar disponível.</div>
+                         )}
+                     </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                     {/* Campos de Supervisão e Coordenação Read-Only */}
                      <div>
                          <label className={labelClass}>Supervisor</label>
                          <input disabled value={users.find(u => u.id === formData.supervisorId)?.name || automaticSupervisor?.name || 'Não definido'} className={`${inputClasses} bg-gray-200 text-gray-900 font-bold opacity-100 cursor-not-allowed border-gray-400`} />
                      </div>
+                     <div>
+                         <label className={labelClass}>Coordenador</label>
+                         <input disabled value={automaticCoordinator?.name || 'Não definido'} className={`${inputClasses} bg-gray-200 text-gray-900 font-bold opacity-100 cursor-not-allowed border-gray-400`} />
+                     </div>
                 </div>
+
                 <div><label className={labelClass}>Descrição</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className={`${inputClasses} h-24`} /></div>
             </div>
             

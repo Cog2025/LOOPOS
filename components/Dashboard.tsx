@@ -1,4 +1,4 @@
-// File: src/components/Dashboard.tsx
+// File: components/Dashboard.tsx
 import React, { useState, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -25,7 +25,8 @@ interface DashboardModalConfig {
 }
 
 const Dashboard: React.FC = () => {
-  const { osList, filterOSForUser } = useData();
+  // ✅ ADICIONADO: plants e users para a busca avançada
+  const { osList, filterOSForUser, plants, users } = useData();
   const { user } = useAuth();
 
   const [currentView, setCurrentView] = useState<ViewType>('KANBAN');
@@ -36,18 +37,32 @@ const Dashboard: React.FC = () => {
 
   const filteredOS = useMemo(() => {
     let list = filterOSForUser(user!);
+    
     if (searchTerm) {
       const lower = searchTerm.toLowerCase();
-      list = list.filter(os => 
-        os.title.toLowerCase().includes(lower) ||
-        os.description.toLowerCase().includes(lower) ||
-        os.id.toLowerCase().includes(lower)
-      );
+      list = list.filter(os => {
+        // Busca dados relacionados
+        const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
+        const techName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
+        
+        // Verifica se o termo está em algum desses campos
+        return (
+            os.title.toLowerCase().includes(lower) ||
+            os.description.toLowerCase().includes(lower) ||
+            os.id.toLowerCase().includes(lower) ||
+            plantName.includes(lower) || // ✅ Busca por Nome da Usina
+            techName.includes(lower)     // ✅ Busca por Nome do Técnico
+        );
+      });
     }
     return list;
-  }, [osList, user, searchTerm, filterOSForUser]);
+  }, [osList, user, searchTerm, filterOSForUser, plants, users]);
 
   const closeModal = () => setModalConfig(null);
+
+  const handleOpenDownloadFilter = (status?: string) => {
+      setModalConfig({ type: 'DOWNLOAD_FILTER', data: { status } });
+  };
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 font-sans text-gray-900 dark:text-gray-100">
@@ -73,7 +88,10 @@ const Dashboard: React.FC = () => {
 
         <main className="flex-1 overflow-x-auto overflow-y-hidden relative">
           {currentView === 'KANBAN' && (
-            <Board osList={filteredOS} onOpenDownloadFilter={() => setModalConfig({ type: 'DOWNLOAD_FILTER' })} />
+            <Board 
+                osList={filteredOS} 
+                onOpenDownloadFilter={handleOpenDownloadFilter} 
+            />
           )} 
           {currentView === 'CALENDAR' && (
             <Calendar osList={filteredOS} onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: os })} />
@@ -103,12 +121,11 @@ const Dashboard: React.FC = () => {
           isOpen={true}
           onClose={closeModal}
           config={modalConfig as unknown as ManagementModalConfig}
-          // ✅ CORREÇÃO AQUI: Captura 'userToEdit' E 'roleToSet'
           onOpenUserForm={(userToEdit, roleToSet) => setModalConfig({ 
               type: 'USER_FORM', 
               data: { 
                   user: userToEdit, 
-                  role: roleToSet, // Passa o cargo para o UserForm
+                  role: roleToSet, 
                   parentConfig: modalConfig 
               } 
           })}
@@ -123,7 +140,7 @@ const Dashboard: React.FC = () => {
         <UserForm
           isOpen={true}
           user={modalConfig.data?.user}
-          role={modalConfig.data?.role} // ✅ Recebe o cargo aqui
+          role={modalConfig.data?.role} 
           onClose={() => modalConfig.data?.parentConfig ? setModalConfig(modalConfig.data.parentConfig) : closeModal()}
         />
       )}
@@ -136,7 +153,14 @@ const Dashboard: React.FC = () => {
         />
       )}
 
-      {modalConfig?.type === 'DOWNLOAD_FILTER' && <DownloadModal isOpen={true} onClose={closeModal} />}
+      {modalConfig?.type === 'DOWNLOAD_FILTER' && (
+        <DownloadModal 
+            isOpen={true} 
+            onClose={closeModal} 
+            initialStatus={modalConfig.data?.status} 
+        />
+      )}
+      
       {modalConfig?.type === 'SCHEDULE_RECURRENCE' && <ScheduleOSModal isOpen={true} onClose={closeModal} />}
 
     </div>

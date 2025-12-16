@@ -1,4 +1,4 @@
-// File: src/components/Sidebar.tsx
+// File: components/Sidebar.tsx
 import React from 'react';
 import { 
   LayoutDashboard, 
@@ -68,8 +68,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   // --- BOTÕES DE CARGOS ---
-  // A propriedade 'label' aqui pode ser usada no Modal também se necessário
-  const userRoleButtons = [
+  const allRoleButtons = [
     { role: Role.ADMIN, label: 'Administradores', icon: ShieldCheck },
     { role: Role.OPERATOR, label: 'Operadores', icon: Monitor },
     { role: Role.COORDINATOR, label: 'Coordenadores', icon: UserCheck },
@@ -79,10 +78,24 @@ const Sidebar: React.FC<SidebarProps> = ({
     { role: Role.CLIENT, label: 'Clientes', icon: Briefcase },
   ];
 
+  // ✅ FILTRO DE VISIBILIDADE DO MENU (RBAC)
+  // - Admin/Operador: Veem todos os botões.
+  // - Outros: Veem equipe (Coord, Sup, Tec, Aux) e Clientes, mas NÃO veem Admin/Operador.
+  const visibleRoleButtons = allRoleButtons.filter(btn => {
+      if (!user) return false;
+      
+      // Admin e Operador veem tudo
+      if (user.role === Role.ADMIN || user.role === Role.OPERATOR) return true;
+
+      // Outros cargos não devem ver o botão de gerenciar Admins ou Operadores
+      if (btn.role === Role.ADMIN || btn.role === Role.OPERATOR) return false;
+
+      return true;
+  });
+
   const handleOpenUserRole = (roleFilter: Role, label: string) => {
     setModalConfig({ 
       type: 'MANAGE_USERS', 
-      // Passamos o roleFilter e o label para o título do modal ficar correto
       data: { roleFilter, label } 
     });
     setMobileOpen(false);
@@ -93,7 +106,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     setMobileOpen(false);
   };
 
-  const canManage = user?.role && [Role.ADMIN, Role.COORDINATOR, Role.SUPERVISOR, Role.OPERATOR].includes(user.role);
+  // Qualquer usuário autenticado (exceto talvez Cliente em alguns casos) pode ver a seção de equipe
+  // A filtragem real dos dados acontece no Modal
+  const canViewTeam = user && user.role !== Role.CLIENT;
 
   return (
     <>
@@ -170,8 +185,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
           <div className="my-4 border-t border-gray-200 dark:border-gray-700" />
 
-          {/* Seção de Gestão */}
-          {canManage && (
+          {/* Seção de Gestão (Equipe e Usinas) */}
+          {canViewTeam && (
             <>
               {!isCollapsed && (
                 <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -179,8 +194,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               )}
 
-              {/* Botões de Cargos */}
-              {userRoleButtons.map((roleItem) => (
+              {/* Botões de Cargos Filtrados */}
+              {visibleRoleButtons.map((roleItem) => (
                 <button
                   key={roleItem.role}
                   onClick={() => handleOpenUserRole(roleItem.role, roleItem.label)}
@@ -211,8 +226,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Factory size={20} />
                 {!isCollapsed && <span className="font-medium">Usinas</span>}
               </button>
-
-              {/* ❌ BOTÃO DE CONFIGURAÇÕES EXCLUÍDO CONFORME SOLICITADO */}
             </>
           )}
 

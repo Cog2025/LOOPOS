@@ -2,11 +2,11 @@
 // Este componente renderiza um modal para filtrar e baixar relatórios de Ordens de Serviço em formato ZIP contendo PDFs individuais.
 // ATUALIZAÇÃO: Filtro de "Usina" agora respeita as permissões do usuário (Cliente só vê suas usinas).
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { Role, Priority } from '../../types';
+import { Role, Priority, OSStatus } from '../../types';
 import { generateOSReport } from '../utils/pdfGenerator';
 import { Download } from 'lucide-react';
 import JSZip from 'jszip'; 
@@ -14,20 +14,26 @@ import JSZip from 'jszip';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  initialStatus?: string; 
 }
 
-const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
+const DownloadModal: React.FC<Props> = ({ isOpen, onClose, initialStatus }) => {
   const { osList, plants, users } = useData();
   const { user } = useAuth();
 
   const [selectedPlant, setSelectedPlant] = useState('');
   const [selectedPriority, setSelectedPriority] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState(initialStatus || '');
   const [selectedTechnician, setSelectedTechnician] = useState('');
+  const [selectedAsset, setSelectedAsset] = useState(''); 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Helpers passados para o gerador
+  useEffect(() => {
+      if (initialStatus) setSelectedStatus(initialStatus);
+  }, [initialStatus]);
+
   const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || id;
   const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'N/A';
 
@@ -45,6 +51,28 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
     });
   }, [users, selectedPlant]);
 
+  // ✅ LISTA DE ATIVOS CONDICIONAL (Depende de Status e Usina)
+  const availableAssets = useMemo(() => {
+      let sourceList = osList;
+
+      // Filtra primeiro pela Usina
+      if (selectedPlant) {
+          sourceList = sourceList.filter(os => os.plantId === selectedPlant);
+      }
+
+      // Filtra também pelo Status selecionado (para mostrar apenas ativos relevantes)
+      if (selectedStatus) {
+          sourceList = sourceList.filter(os => os.status === selectedStatus);
+      }
+
+      // Extrai ativos únicos
+      const assets = new Set<string>();
+      sourceList.forEach(os => {
+          os.assets?.forEach(a => assets.add(a));
+      });
+      return Array.from(assets).sort();
+  }, [osList, selectedPlant, selectedStatus]); // Adicionei selectedStatus na dependência
+
   const filteredData = useMemo(() => {
     return osList.filter(os => {
       const isAllowed = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || 
@@ -54,13 +82,15 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
       if (selectedPlant && os.plantId !== selectedPlant) return false;
       if (selectedPriority && os.priority !== selectedPriority) return false;
+      if (selectedStatus && os.status !== selectedStatus) return false;
       if (selectedTechnician && os.technicianId !== selectedTechnician) return false;
+      if (selectedAsset && !os.assets?.includes(selectedAsset)) return false; 
       if (startDate && os.startDate < startDate) return false;
       if (endDate && os.startDate > endDate) return false;
       
       return true;
     });
-  }, [osList, selectedPlant, selectedPriority, selectedTechnician, startDate, endDate, user]);
+  }, [osList, selectedPlant, selectedPriority, selectedStatus, selectedTechnician, selectedAsset, startDate, endDate, user]);
 
   const handleDownloadZip = async () => {
     if (filteredData.length === 0) {
@@ -77,25 +107,20 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
       const helpers = { getPlantName, getUserName };
 
       for (const os of filteredData) {
-        // ✅ CORREÇÃO: Passa [os] como array e os helpers exigidos
-        const doc = await generateOSReport(
-            [os], // <--- Envolve em array
-            `Relatório Individual - ${os.id}`, 
-            helpers, 
-            false // <--- Não salva direto, retorna o doc
-        );
+        const doc = await generateOSReport([os], `Relatório - ${os.id}`, helpers, false);
         
+        const safeId = os.id;
         const safeDate = os.startDate.split('T')[0];
-        const safePlant = getPlantName(os.plantId).replace(/[^a-z0-9]/gi, '_').substring(0, 15);
-        const safeTitle = os.title.replace(/[^a-z0-9]/gi, '_').substring(0, 30);
-        const fileName = `${safeDate}_${safePlant}_${safeTitle}.pdf`;
+        const safePlant = getPlantName(os.plantId).replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '');
+        const safeAsset = (os.assets?.[0] || 'Geral').replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '');
+        
+        const fileName = `${safeId}-${safeDate}-${safePlant}-${safeAsset}.pdf`;
         
         const pdfBlob = doc.output('blob');
         folder?.file(fileName, pdfBlob);
       }
 
       const content = await zip.generateAsync({ type: "blob" });
-      
       const url = window.URL.createObjectURL(content);
       const a = document.createElement("a");
       a.href = url;
@@ -106,7 +131,7 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
       onClose();
     } catch (error) {
       console.error("Erro ao gerar ZIP:", error);
-      alert("Erro ao gerar o relatório. Tente novamente.");
+      alert("Erro ao gerar o relatório.");
     } finally {
       setIsGenerating(false);
     }
@@ -118,7 +143,7 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
     <Modal isOpen={isOpen} onClose={onClose} title="Baixar Relatórios (PDF)">
       <div className="space-y-4 p-1">
         <div className="bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded border border-yellow-200 dark:border-yellow-700 text-xs text-yellow-800 dark:text-yellow-200">
-          Selecione os filtros abaixo para gerar um arquivo ZIP contendo os relatórios individuais de cada OS.
+          Selecione os filtros abaixo para gerar um arquivo ZIP contendo os relatórios individuais.
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -140,12 +165,35 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="label block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Prioridade</label>
-            <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={inputClass}>
-              <option value="">Todas</option>
-              {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+            <label className="label block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Status</label>
+            <select value={selectedStatus} onChange={e => setSelectedStatus(e.target.value)} className={inputClass}>
+              <option value="">Todos</option>
+              {Object.values(OSStatus).map(s => (
+                  // ✅ CORREÇÃO VISUAL: Troca "Em Progresso" por "Em Execução" apenas na exibição
+                  <option key={s} value={s}>
+                      {s === 'Em Progresso' ? 'Em Execução' : s}
+                  </option>
+              ))}
             </select>
           </div>
+          
+          <div>
+            <label className="label block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Ativo</label>
+            <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={inputClass}>
+              <option value="">Todos</option>
+              {availableAssets.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+            <div>
+                <label className="label block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Prioridade</label>
+                <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={inputClass}>
+                <option value="">Todas</option>
+                {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+            </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4 pt-2 border-t dark:border-gray-700">
@@ -168,7 +216,7 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose }) => {
           <button 
             onClick={handleDownloadZip} 
             disabled={isGenerating || filteredData.length === 0}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold shadow disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold shadow disabled:opacity-50"
           >
             {isGenerating ? 'Gerando...' : <><Download size={18} /> Baixar ZIP</>}
           </button>

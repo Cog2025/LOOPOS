@@ -13,7 +13,6 @@ const formatDuration = (seconds?: number) => {
   return `${h}:${m}:${s}`;
 };
 
-// Helper de Segurança para Datas
 const safeFormat = (dateStr: string | undefined | null, pattern: string): string => {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
@@ -21,8 +20,14 @@ const safeFormat = (dateStr: string | undefined | null, pattern: string): string
     return format(date, pattern);
 };
 
-// Helper: Carrega imagem URL e converte para Base64
-const getImageData = (url: string): Promise<string> => {
+// ✅ HELPER MELHORADO: Retorna Base64 E as dimensões originais
+interface ImageData {
+    base64: string;
+    width: number;
+    height: number;
+}
+
+const getImageData = (url: string): Promise<ImageData | null> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous'; 
@@ -33,10 +38,14 @@ const getImageData = (url: string): Promise<string> => {
       canvas.height = img.height;
       const ctx = canvas.getContext('2d');
       ctx?.drawImage(img, 0, 0);
-      resolve(canvas.toDataURL('image/jpeg'));
+      resolve({
+          base64: canvas.toDataURL('image/jpeg'),
+          width: img.width,
+          height: img.height
+      });
     };
     img.onerror = () => {
-        resolve(''); 
+        resolve(null); 
     };
   });
 };
@@ -56,7 +65,6 @@ export const generateOSReport = async (
   const doc = new jsPDF();
   let yPos = 15;
 
-  // Capa / Título Principal
   doc.setFontSize(16); doc.text(title, 14, yPos);
   doc.setFontSize(10); doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, yPos + 6);
   yPos += 15;
@@ -64,26 +72,28 @@ export const generateOSReport = async (
   for (let i = 0; i < osList.length; i++) {
     const os = osList[i];
     
-    // Nova página para cada OS (exceto a primeira)
     if (i > 0) { 
         doc.addPage(); 
         yPos = 15; 
     }
 
-    // 1. Título da OS
-    doc.setFillColor(41, 128, 185); // Azul
+    // 1. Título
+    doc.setFillColor(41, 128, 185);
     doc.rect(14, yPos, 182, 8, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(12); doc.setFont('helvetica', 'bold');
     doc.text(`${os.id} - ${os.activity}`, 16, yPos + 5.5);
     yPos += 15;
 
-    // 2. Tabela de Dados Gerais
+    // 2. Dados Gerais
     doc.setTextColor(0, 0, 0);
     const executionTime = formatDuration(os.executionTimeSeconds);
     
+    // ✅ CORREÇÃO DE STATUS: "Em Progresso" -> "Em Execução"
+    const displayStatus = os.status === 'Em Progresso' ? 'Em Execução' : os.status;
+
     const rows = [
-      ['Status', os.status, 'Prioridade', os.priority],
+      ['Status', displayStatus, 'Prioridade', os.priority],
       ['Início', safeFormat(os.startDate, 'dd/MM/yyyy'), 'Fim', safeFormat(os.endDate, 'dd/MM/yyyy')],
       ['Técnico', helpers.getUserName(os.technicianId), 'Tempo Decorrido', executionTime],
       ['Ativo', (os as any).assetName || os.assets?.join(', ') || '-', 'Usina', helpers.getPlantName(os.plantId)]
@@ -125,55 +135,65 @@ export const generateOSReport = async (
           yPos += (splitComment.length * 4) + 2;
         }
 
+        // Fotos do Item
         const itemImages = os.imageAttachments?.filter(img => 
             img.caption && img.caption.includes(`Item ${index + 1}`)
         ) || [];
         
         if (itemImages.length > 0) {
           yPos += 5; 
-          let xImg = 14; // Margem esquerda
-          let maxH = 0;
-
-          // ✅ CONFIGURAÇÃO DE TAMANHO GRANDE (Checklist)
-          const imgW = 80;  // Bem maior (era 30)
-          const imgH = 60;  // Bem maior (era 30)
-          const gap = 10;   // Espaço entre fotos
+          
+          // ✅ CONFIGURAÇÃO DE LAYOUT ADAPTÁVEL
+          const maxImgWidth = 80;  // Largura máxima da caixa
+          const maxImgHeight = 60; // Altura máxima da caixa
+          const gap = 10;
+          let xImg = 14;
+          let maxRowHeight = 0; // Altura da maior imagem na linha atual
 
           for (const img of itemImages) {
             if (img.url) {
-              const base64 = await getImageData(img.url);
-              if (base64) {
-                // Se passar da margem direita (aprox 190), quebra linha
-                if (xImg + imgW > 200) { 
+              const imgData = await getImageData(img.url);
+              if (imgData) {
+                // Quebra de linha se passar da margem
+                if (xImg + maxImgWidth > 200) { 
                     xImg = 14; 
-                    yPos += maxH + 10; 
-                    maxH = 0; 
+                    yPos += maxRowHeight + 15; // Espaço para imagem + legenda
+                    maxRowHeight = 0; 
                 }
-                // Se passar do fim da página, cria nova página
-                if (yPos + imgH + 10 > 280) { 
+                // Quebra de página
+                if (yPos + maxImgHeight + 10 > 280) { 
                     doc.addPage(); 
                     yPos = 15; 
                     xImg = 14; 
-                    maxH = 0; 
+                    maxRowHeight = 0; 
                 }
 
+                // ✅ CÁLCULO DE PROPORÇÃO (ASPECT RATIO)
+                const ratio = Math.min(maxImgWidth / imgData.width, maxImgHeight / imgData.height);
+                const finalW = imgData.width * ratio;
+                const finalH = imgData.height * ratio;
+
+                // Centralizar a imagem na "caixa" imaginária de 80x60
+                const offsetX = xImg + (maxImgWidth - finalW) / 2;
+                
                 try {
-                    doc.addImage(base64, 'JPEG', xImg, yPos, imgW, imgH);
+                    doc.addImage(imgData.base64, 'JPEG', offsetX, yPos, finalW, finalH);
                 } catch(e) { console.error(e); }
                 
+                // Legenda centralizada abaixo da caixa
                 doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-                const fName = doc.splitTextToSize(img.fileName || 'Foto', imgW);
-                doc.text(fName, xImg, yPos + imgH + 4);
+                const fName = doc.splitTextToSize(img.fileName || 'Foto', maxImgWidth);
+                doc.text(fName, xImg, yPos + maxImgHeight + 4); // Posição fixa abaixo da "caixa"
 
-                const h = imgH + (fName.length * 4) + 5;
-                if (h > maxH) maxH = h;
+                // Calcula altura total usada (Caixa da imagem + Texto)
+                const totalH = maxImgHeight + (fName.length * 4) + 5;
+                if (totalH > maxRowHeight) maxRowHeight = totalH;
                 
-                // Move X para a próxima imagem
-                xImg += imgW + gap;
+                xImg += maxImgWidth + gap;
               }
             }
           }
-          yPos += maxH + 5; // Espaço após a linha de imagens
+          yPos += maxRowHeight + 5; 
         } else {
             yPos += 2;
         }
@@ -181,7 +201,7 @@ export const generateOSReport = async (
       yPos += 5;
     }
 
-    // 4. Fotos Gerais
+    // 4. Fotos Gerais (Lógica Adaptável Igual)
     const generalImages = os.imageAttachments?.filter(img => !img.caption?.startsWith('Item ')) || [];
     if (generalImages.length > 0) {
       if (yPos > 240) { doc.addPage(); yPos = 15; }
@@ -189,44 +209,46 @@ export const generateOSReport = async (
       doc.text("Anexos Gerais:", 14, yPos);
       yPos += 10;
 
-      let xImg = 14;
-      let maxH = 0;
-      
-      // ✅ CONFIGURAÇÃO DE TAMANHO GRANDE (Gerais)
-      const imgW = 85; // Ocupa quase metade da página
-      const imgH = 65; 
+      const maxImgWidth = 85; 
+      const maxImgHeight = 65; 
       const gap = 10;
+      let xImg = 14;
+      let maxRowHeight = 0;
 
       for (const img of generalImages) {
         if (img.url) {
-          const base64 = await getImageData(img.url);
-          if (base64) {
-             // Quebra de linha (Grid de 2 colunas)
-             if (xImg + imgW > 200) { 
+          const imgData = await getImageData(img.url);
+          if (imgData) {
+             if (xImg + maxImgWidth > 200) { 
                  xImg = 14; 
-                 yPos += maxH + 10; 
-                 maxH = 0; 
+                 yPos += maxRowHeight + 15; 
+                 maxRowHeight = 0; 
              }
-             // Quebra de página
-             if (yPos + imgH + 10 > 280) { 
+             if (yPos + maxImgHeight + 10 > 280) { 
                  doc.addPage(); 
                  yPos = 15; 
                  xImg = 14; 
-                 maxH = 0; 
+                 maxRowHeight = 0; 
              }
              
+             // ✅ CÁLCULO DE PROPORÇÃO
+             const ratio = Math.min(maxImgWidth / imgData.width, maxImgHeight / imgData.height);
+             const finalW = imgData.width * ratio;
+             const finalH = imgData.height * ratio;
+             const offsetX = xImg + (maxImgWidth - finalW) / 2;
+
              try {
-                doc.addImage(base64, 'JPEG', xImg, yPos, imgW, imgH);
+                doc.addImage(imgData.base64, 'JPEG', offsetX, yPos, finalW, finalH);
              } catch (e) { console.error(e); }
              
              doc.setFontSize(9);
-             const splitN = doc.splitTextToSize(img.fileName || 'Geral', imgW);
-             doc.text(splitN, xImg, yPos + imgH + 4);
+             const splitN = doc.splitTextToSize(img.fileName || 'Geral', maxImgWidth);
+             doc.text(splitN, xImg, yPos + maxImgHeight + 4);
              
-             const h = imgH + (splitN.length * 4) + 5;
-             if (h > maxH) maxH = h;
+             const totalH = maxImgHeight + (splitN.length * 4) + 5;
+             if (totalH > maxRowHeight) maxRowHeight = totalH;
              
-             xImg += imgW + gap;
+             xImg += maxImgWidth + gap;
           }
         }
       }

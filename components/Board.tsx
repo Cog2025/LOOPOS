@@ -8,8 +8,8 @@ import OSDetailModal from './modals/OSDetailModal';
 import OSForm from './modals/OSForm';
 
 interface BoardProps {
-    onOpenDownloadFilter?: () => void;
-    // ✅ NOVO: Recebe a lista filtrada do pai (Dashboard)
+    // ✅ Agora aceita um status opcional
+    onOpenDownloadFilter?: (status?: string) => void;
     osList: OS[];
 }
 
@@ -23,7 +23,6 @@ const Board: React.FC<BoardProps> = ({ onOpenDownloadFilter, osList }) => {
     osList.find(o => o.id === selectedOSId) || null, 
   [osList, selectedOSId]);
 
-  // Agora usa 'osList' (que vem filtrada) em vez de pegar tudo do contexto
   const columnsData = useMemo(() => {
       const today = new Date().toISOString().split('T')[0];
       
@@ -99,7 +98,8 @@ const Board: React.FC<BoardProps> = ({ onOpenDownloadFilter, osList }) => {
                 color={col.color}
                 isFutureColumn={col.isFuture}
                 onCardClick={(os) => setSelectedOSId(os.id)}
-                onOpenDownloadFilter={onOpenDownloadFilter}
+                // ✅ ENVIA O STATUS CORRETO PARA O FILTRO
+                onOpenDownloadFilter={() => onOpenDownloadFilter?.(columnId === 'FUTURE' ? OSStatus.PENDING : columnId)}
               />
             ))}
           </div>
