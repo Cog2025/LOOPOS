@@ -1,6 +1,6 @@
 // File: components/Board.tsx
 import React, { useState } from 'react';
-import { OS, OSStatus } from '../types';
+import { OS, OSStatus, Priority } from '../types';
 import { format, parseISO, isAfter, startOfDay } from 'date-fns';
 import { Clock, AlertCircle, CheckCircle, PlayCircle, CalendarClock, Download, ChevronDown } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
@@ -15,17 +15,20 @@ const ITEMS_PER_PAGE = 10;
 
 const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick }) => {
   const { plants, users } = useData();
-
-  // Estado para controlar a paginação por coluna (ID da coluna -> Quantidade visível)
+  
+  // Estado para paginação local
   const [visibleCount, setVisibleCount] = useState<Record<string, number>>({});
+  
+  // Estado para feedback de "Copiado!"
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Helpers
   const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || 'Usina não encontrada';
   const getUserName = (id?: string) => users.find(u => u.id === id)?.name || 'N/A';
-
-  // DATA DE HOJE
+  
+  // Data de referência (hoje 00:00)
   const today = startOfDay(new Date());
 
-  // Função para carregar mais itens em uma coluna específica
   const handleLoadMore = (columnId: string) => {
     setVisibleCount(prev => ({
         ...prev,
@@ -33,13 +36,32 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
     }));
   };
 
-  // --- LÓGICA DE COLUNAS ---
+  const getPriorityColor = (priority: Priority) => {
+      switch (priority) {
+          case Priority.URGENT: return 'bg-red-600';
+          case Priority.HIGH: return 'bg-orange-500';
+          case Priority.MEDIUM: return 'bg-yellow-500';
+          case Priority.LOW: return 'bg-green-500';
+          default: return 'bg-gray-400';
+      }
+  };
+
+  // Lógica de Copiar ID
+  const handleCopyId = (e: React.MouseEvent, id: string) => {
+      e.stopPropagation(); // Impede abrir o modal de detalhes
+      navigator.clipboard.writeText(id);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000); // Remove aviso após 2s
+  };
+
+  // Definição das Colunas e Filtros
   const columns = [
     {
       id: 'future', 
       title: 'Futuras',
       icon: CalendarClock,
       color: 'bg-indigo-500',
+      // Filtro: Pendente E Data > Hoje
       items: osList.filter(os => {
           if (os.status !== OSStatus.PENDING) return false;
           const osDate = parseISO(os.startDate); 
@@ -51,6 +73,7 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
       title: 'Pendente',
       icon: AlertCircle,
       color: 'bg-yellow-500',
+      // Filtro: Pendente E Data <= Hoje
       items: osList.filter(os => {
           if (os.status !== OSStatus.PENDING) return false;
           const osDate = parseISO(os.startDate);
@@ -84,7 +107,6 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
     <div className="h-full overflow-x-auto overflow-y-hidden p-6">
       <div className="flex gap-6 h-full min-w-[1400px]">
         {columns.map(col => {
-            // Paginação Local
             const currentLimit = visibleCount[col.id] || ITEMS_PER_PAGE;
             const visibleItems = col.items.slice(0, currentLimit);
             const hasMore = col.items.length > currentLimit;
@@ -92,7 +114,7 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
             return (
               <div key={col.id} className="flex-1 flex flex-col bg-gray-100 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700 h-full max-w-xs">
                 
-                {/* Header */}
+                {/* Header da Coluna */}
                 <div className={`p-3 rounded-t-xl flex justify-between items-center text-white ${col.color}`}>
                   <div className="flex items-center gap-2 font-bold">
                     <col.icon size={18} />
@@ -117,24 +139,47 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
                   {visibleItems.map(os => (
                     <div 
                       key={os.id} 
-                      className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-200 dark:border-gray-600 hover:shadow-md transition-shadow cursor-pointer group"
+                      // ✅ CORREÇÃO: Removido 'overflow-hidden' para o tooltip não ser cortado
+                      className="relative bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-200 dark:border-gray-600 hover:shadow-md transition-shadow cursor-pointer group"
                       onClick={() => onCardClick(os)} 
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="text-xs font-bold text-blue-600 dark:text-blue-400">{os.id}</span>
+                      {/* ✅ CORREÇÃO: Adicionado 'rounded-l-lg' para a barra colorida acompanhar a borda do card */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg ${getPriorityColor(os.priority)}`} />
+
+                      <div className="flex justify-between items-start mb-2 pl-2">
+                        
+                        {/* ID da OS (Copiável) */}
+                        <div className="relative">
+                            <span 
+                                className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer select-none"
+                                onClick={(e) => handleCopyId(e, os.id)}
+                                title="Clique para copiar ID"
+                            >
+                                {os.id}
+                            </span>
+                            {/* Tooltip "Copiado!" (Agora não será cortado) */}
+                            {copiedId === os.id && (
+                                <span className="absolute left-0 -top-7 bg-gray-900 text-white text-[10px] px-2 py-1 rounded shadow-lg animate-fade-in-out whitespace-nowrap z-[9999]">
+                                    Copiado!
+                                    {/* Seta do tooltip */}
+                                    <span className="absolute -bottom-1 left-2 w-2 h-2 bg-gray-900 rotate-45"></span>
+                                </span>
+                            )}
+                        </div>
+
                         <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold
                             ${os.priority === 'Alta' ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'}`}>
                             {os.priority}
                         </span>
                       </div>
                       
-                      <h4 className="font-bold text-gray-800 dark:text-gray-200 text-sm mb-1 line-clamp-2" title={os.title}>
+                      <h4 className="font-bold text-gray-800 dark:text-gray-200 text-sm mb-1 line-clamp-2 pl-2" title={os.title}>
                           {os.title}
                       </h4>
                       
-                      <p className="text-xs text-gray-500 mb-3 truncate">{getPlantName(os.plantId)}</p>
+                      <p className="text-xs text-gray-500 mb-3 truncate pl-2">{getPlantName(os.plantId)}</p>
 
-                      <div className="flex items-center justify-between text-xs text-gray-400 mt-auto pt-2 border-t dark:border-gray-700">
+                      <div className="flex items-center justify-between text-xs text-gray-400 mt-auto pt-2 border-t dark:border-gray-700 pl-2">
                           <div className="flex items-center gap-1">
                               <span className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-[8px] font-bold text-gray-600">
                                   {getUserName(os.technicianId).charAt(0)}
@@ -143,6 +188,7 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
                           </div>
                           <span className="flex items-center gap-1">
                               <CalendarClock size={12} />
+                              {/* Formata a data para dd/mm/yyyy */}
                               {os.startDate.split('-').reverse().join('/')}
                           </span>
                       </div>

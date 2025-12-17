@@ -5,9 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { OS, OSStatus, Priority, Role } from '../../types';
 import Modal from './Modal';
 
-// ... (SearchableSelect mantido igual ao anterior, omitido para brevidade) ...
-// (Se precisar do código do SearchableSelect, use o da resposta anterior)
-
+// --- SEARCHABLE SELECT (Com controle de foco externo) ---
 interface Option { label: string; value: string; }
 interface SearchableSelectProps {
     options: Option[];
@@ -31,6 +29,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
+            // Se clicar fora E estiver aberto, fecha
             if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node) && isOpen) {
                 onClose();
             }
@@ -93,12 +92,12 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
     });
 
     const [selectedAssetCategory, setSelectedAssetCategory] = useState<string>('');
+    
+    // Controle de qual dropdown está aberto (para evitar sobreposição)
     const [activeField, setActiveField] = useState<string | null>(null);
-
     const handleToggleDropdown = (fieldId: string) => setActiveField(prev => prev === fieldId ? null : fieldId);
     const closeDropdowns = () => setActiveField(null);
 
-    // ✅ CORREÇÃO: DATA INICIAL LOCAL
     useEffect(() => {
         if (initialData) {
             setFormData(initialData);
@@ -106,7 +105,7 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
                 setSelectedAssetCategory(initialData.assets[0]);
             }
         } else {
-            // Cria data local correta YYYY-MM-DD
+            // Data local
             const today = new Date();
             const year = today.getFullYear();
             const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -127,7 +126,6 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
 
     const { availableTechs, availableSups, availableCoords, availableAssistants } = useMemo(() => {
         if (!currentPlant) return { availableTechs: [], availableSups: [], availableCoords: null, availableAssistants: [] };
-        
         return {
             availableTechs: users.filter(u => u.role === Role.TECHNICIAN && currentPlant.technicianIds?.includes(u.id)).map(u => ({ label: u.name, value: u.id })),
             availableSups: users.filter(u => u.role === Role.SUPERVISOR && currentPlant.supervisorIds?.includes(u.id)).map(u => ({ label: u.name, value: u.id })),
@@ -160,12 +158,18 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
     const handleTaskChange = (taskTitle: string) => {
         const selectedPlan = taskOptions.find(t => t.value === taskTitle)?.fullPlan;
         
+        let autoPriority = Priority.MEDIUM;
+        if (selectedPlan?.criticality === 'Baixa') autoPriority = Priority.LOW;
+        if (selectedPlan?.criticality === 'Média') autoPriority = Priority.MEDIUM;
+        if (selectedPlan?.criticality === 'Alta') autoPriority = Priority.HIGH;
+        if (selectedPlan?.criticality === 'Urgente') autoPriority = Priority.URGENT;
+
         setFormData(prev => ({
             ...prev,
             activity: taskTitle,
-            title: taskTitle,
+            title: taskTitle, // Título Automático
             subtasksStatus: selectedPlan?.subtasks?.map((text, id) => ({ id, text, done: false })) || [],
-            priority: (selectedPlan?.criticality === 'Alto' || selectedPlan?.criticality === 'Urgente') ? Priority.HIGH : Priority.MEDIUM,
+            priority: autoPriority, // Prioridade Automática
             classification1: selectedPlan?.classification1,
             classification2: selectedPlan?.classification2,
             estimatedDuration: selectedPlan?.estimated_duration_minutes ? selectedPlan.estimated_duration_minutes * 60 : 0,
@@ -177,7 +181,6 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!formData.title || !formData.plantId) return alert("Preencha os campos obrigatórios (Usina, Ativo, Tarefa)");
-
         try {
             if (initialData?.id) await updateOS(formData as OS);
             else await addOS(formData as OS);
@@ -192,13 +195,16 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
         <Modal isOpen={isOpen} onClose={onClose} title={initialData ? "Editar Ordem de Serviço" : "Nova Ordem de Serviço"}>
             <form onSubmit={handleSubmit} className="flex flex-col h-[80vh]">
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    
+                    {/* CAMPO DE TÍTULO REMOVIDO (É preenchido automaticamente pela Tarefa) */}
+
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Usina *</label>
                             <SearchableSelect 
                                 options={plantOptions} 
                                 value={formData.plantId || ''} 
-                                onChange={(val) => setFormData({ ...formData, plantId: val, assets: [], activity: '', title: '' })}
+                                onChange={(val) => setFormData({ ...formData, plantId: val, assets: [], activity: '', title: '' })} 
                                 isOpen={activeField === 'plant'}
                                 onToggle={() => handleToggleDropdown('plant')}
                                 onClose={closeDropdowns}
@@ -247,8 +253,14 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
                             </select>
                         </div>
                         <div>
-                            <label className={labelClass}>Prioridade</label>
-                            <select value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value as any})} className={inputClass}>
+                            {/* ✅ CRITICIDADE (READ-ONLY) */}
+                            <label className={labelClass}>Criticidade</label>
+                            <select 
+                                value={formData.priority} 
+                                onChange={e => setFormData({...formData, priority: e.target.value as any})} 
+                                className={`${inputClass} bg-gray-100 opacity-70 cursor-not-allowed`}
+                                disabled // Campo bloqueado
+                            >
                                 {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
                             </select>
                         </div>
