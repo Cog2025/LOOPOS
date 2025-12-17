@@ -1,4 +1,4 @@
-//File: components/MaintenancePlans.tsx
+// File: components/MaintenancePlans.tsx
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
@@ -7,12 +7,16 @@ import { Role, PlantMaintenancePlan } from '../types';
 import Modal from './modals/Modal';
 import StandardLibraryModal from './modals/StandardLibraryModal';
 import CustomInitializationModal from './modals/CustomInitializationModal';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import { Download, ChevronDown, ChevronRight, AlertCircle, BookOpen, Settings, Plus, Trash2, Edit, Save, X } from 'lucide-react';
+// ✅ Importamos o gerador centralizado para garantir formatação igual (numerada)
+import { generateFullMaintenancePDF } from './utils/pdfGenerator';
+import { Download, ChevronDown, ChevronRight, AlertCircle, BookOpen, Settings, Plus, Trash2, Edit, Save, X, FileText } from 'lucide-react';
 
 const MaintenancePlans: React.FC = () => {
-  const { plants, fetchPlantPlan, maintenancePlans, updatePlantTask, deletePlantTask, createPlantTask, initializePlantPlan } = useData();
+  const { 
+    plants, fetchPlantPlan, maintenancePlans, updatePlantTask, 
+    deletePlantTask, createPlantTask, initializePlantPlan,
+    fetchTaskTemplates, taskTemplates // ✅ Necessário para o PDF da biblioteca
+  } = useData();
   const { user } = useAuth();
 
   const [selectedClient, setSelectedClient] = useState('');
@@ -24,7 +28,6 @@ const MaintenancePlans: React.FC = () => {
   
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set()); 
   const [expandedAssets, setExpandedAssets] = useState<Set<string>>(new Set());
-
   const [isAddingAsset, setIsAddingAsset] = useState(false);
   const [newAssetName, setNewAssetName] = useState('');
 
@@ -94,105 +97,45 @@ const MaintenancePlans: React.FC = () => {
     });
   };
 
-  // ✅ NOVA LÓGICA DE PDF APRIMORADA
-  const handleDownloadPDF = () => {
+  // ✅ PDF PLANO USINA (Atualizado para usar a função com números)
+  const handleDownloadPlantPDF = () => {
     if (!selectedPlantId || !currentPlant) return;
-    const doc = new jsPDF();
-    
-    // --- 1. CABEÇALHO E RESUMO DA USINA ---
-    doc.setFontSize(18);
-    doc.setTextColor(40, 40, 40);
-    doc.text(`Plano de Manutenção: ${currentPlant.name}`, 14, 20);
-    
-    doc.setFontSize(10);
-    doc.setTextColor(100, 100, 100);
-    doc.text(`Cliente: ${currentPlant.client}`, 14, 26);
-    doc.text(`Data de Emissão: ${new Date().toLocaleDateString()}`, 14, 31);
+    if (planData.length === 0) {
+        alert("O plano está vazio.");
+        return;
+    }
+    generateFullMaintenancePDF(
+        planData,
+        `Plano de Manutenção: ${currentPlant.name}`,
+        `Cliente: ${currentPlant.client}`
+    );
+  };
 
-    // Resumo Técnico
-    doc.setDrawColor(200, 200, 200);
-    doc.line(14, 35, 196, 35);
-    
-    doc.setFontSize(11);
-    doc.setTextColor(0, 0, 0);
-    doc.text('Resumo da Instalação:', 14, 42);
-    
-    const summaryData = [
-        [`Inversores: ${currentPlant.subPlants.reduce((acc, sp) => acc + sp.inverterCount, 0)}`, 
-         `Strings: ${currentPlant.stringCount}`, 
-         `Trackers: ${currentPlant.trackerCount}`,
-         `Subusinas: ${currentPlant.subPlants.length}`]
-    ];
-
-    autoTable(doc, {
-        startY: 45,
-        head: [],
-        body: summaryData,
-        theme: 'plain',
-        styles: { fontSize: 10, cellPadding: 2 },
-        columnStyles: { 0: { fontStyle: 'bold' }, 1: { fontStyle: 'bold' }, 2: { fontStyle: 'bold' }, 3: { fontStyle: 'bold' } }
-    });
-
-    // --- 2. TABELAS POR ATIVO COM CABEÇALHOS COLORIDOS ---
-    let lastY = (doc as any).lastAutoTable.finalY + 10;
-
-    // Paleta de cores para os cabeçalhos
-    const headerColors = [
-        [41, 128, 185],  // Azul
-        [39, 174, 96],   // Verde
-        [230, 126, 34],  // Laranja
-        [142, 68, 173],  // Roxo
-        [192, 57, 43],   // Vermelho
-        [52, 73, 94]     // Cinza Escuro
-    ];
-    let colorIndex = 0;
-
-    Object.entries(tasksByAsset).forEach(([assetName, tasks]) => {
-        // Seleciona cor cíclica
-        const [r, g, b] = headerColors[colorIndex % headerColors.length];
-        colorIndex++;
-
-        // Título do Grupo
-        doc.setFontSize(12);
-        doc.setTextColor(r, g, b);
-        doc.text(assetName.toUpperCase(), 14, lastY);
+  // ✅ PDF BIBLIOTECA (Corrigido: faz fetch antes)
+  const handleDownloadLibraryPDF = async () => {
+    try {
+        setIsLoading(true);
+        await fetchTaskTemplates(); // Força atualização
+        // Pequeno delay ou usar o estado atualizado do contexto
+        const templates = taskTemplates; 
         
-        const tableBody = tasks.map(t => [
-            t.title,
-            `${t.frequency_days} dias`,
-            // Formata subtarefas como "1) ... 2) ..."
-            t.subtasks.map((s, i) => `${i + 1}) ${s}`).join('\n')
-        ]);
-
-        autoTable(doc, {
-            startY: lastY + 2,
-            head: [['Tarefa', 'Frequência', 'Subtarefas']],
-            body: tableBody,
-            theme: 'grid',
-            headStyles: { fillColor: [r, g, b], textColor: 255, fontStyle: 'bold' },
-            styles: { fontSize: 9, cellPadding: 3, overflow: 'linebreak' },
-            columnStyles: {
-                0: { cellWidth: 60, fontStyle: 'bold' }, // Tarefa
-                1: { cellWidth: 25 }, // Frequência
-                2: { cellWidth: 'auto' } // Subtarefas
-            },
-            didDrawPage: (data) => {
-                // Se quebrar página, atualiza o Y para não sobrepor
-                lastY = data.cursor.y; 
-            }
-        });
-
-        // Atualiza Y para a próxima tabela
-        lastY = (doc as any).lastAutoTable.finalY + 10;
-        
-        // Verifica se precisa de nova página para o próximo título
-        if (lastY > 270) {
-            doc.addPage();
-            lastY = 20;
+        if (!templates || templates.length === 0) {
+            // Tenta pegar direto do contexto se o await não tiver atualizado a tempo (React batching)
+            alert("A biblioteca parece estar vazia ou ainda carregando. Tente novamente em instantes.");
+            return;
         }
-    });
 
-    doc.save(`Plano_${currentPlant.name}.pdf`);
+        generateFullMaintenancePDF(
+            templates,
+            "Biblioteca Padrão de Manutenção (LoopOS)",
+            "Todas as tarefas modelo"
+        );
+    } catch(e) {
+        console.error(e);
+        alert("Erro ao baixar biblioteca.");
+    } finally {
+        setIsLoading(false);
+    }
   };
 
   const handleSaveTask = async () => {
@@ -299,21 +242,34 @@ const MaintenancePlans: React.FC = () => {
         </div>
 
         <div className="flex gap-2 w-full md:w-auto">
+            {/* Botão PDF Usina */}
             <button 
-                onClick={handleDownloadPDF}
+                onClick={handleDownloadPlantPDF}
                 disabled={!selectedPlantId || planData.length === 0}
                 className="flex-1 md:flex-none px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg font-bold shadow-sm transition-all flex items-center justify-center gap-2"
             >
                 <Download size={18} /> Baixar PDF
             </button>
 
+            {/* Botão Biblioteca (Gerenciar) */}
             <button 
                 onClick={() => setShowLibrary(true)}
                 className={`flex-1 md:flex-none px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center justify-center gap-2
                     ${!canManageLibrary ? 'opacity-70 cursor-not-allowed' : ''}`}
                 disabled={!canManageLibrary}
             >
-                <BookOpen size={18} /> Biblioteca Padrão
+                <BookOpen size={18} /> Biblioteca
+            </button>
+
+             {/* ✅ Botão PDF Biblioteca (NOVO) */}
+            <button 
+                onClick={handleDownloadLibraryPDF}
+                disabled={isLoading}
+                className="flex-1 md:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                title="Baixar toda a biblioteca padrão em PDF"
+            >
+                 {isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <FileText size={18} />}
+                 PDF Biblio.
             </button>
 
             {canImplementPlan && (
@@ -360,6 +316,12 @@ const MaintenancePlans: React.FC = () => {
                             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-colors"
                         >
                             Usar Padrão Loop
+                        </button>
+                        <button 
+                            onClick={() => setShowCustomWizard(true)}
+                            className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-md transition-colors"
+                        >
+                            Wizard Customizado
                         </button>
                     </div>
                 )}
@@ -430,6 +392,7 @@ const MaintenancePlans: React.FC = () => {
                                                     <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400 mt-1">
                                                         <span className="flex items-center gap-1">🔄 {task.frequency_days} dias</span>
                                                         <span className="flex items-center gap-1">⚠️ {task.criticality}</span>
+                                                        <span className="flex items-center gap-1">⏱️ {task.estimated_duration_minutes} min</span>
                                                     </div>
                                                 </div>
 
@@ -443,16 +406,10 @@ const MaintenancePlans: React.FC = () => {
                                                     
                                                     {canEditImplemented && (
                                                         <div className="flex gap-1 ml-4 border-l pl-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <button 
-                                                                onClick={(e) => handleEditClick(e, task)}
-                                                                className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"
-                                                            >
+                                                            <button onClick={(e) => handleEditClick(e, task)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded">
                                                                 <Edit size={16} />
                                                             </button>
-                                                            <button 
-                                                                onClick={(e) => handleDeleteTask(e, task.id)}
-                                                                className="p-1.5 text-red-500 hover:bg-red-50 rounded"
-                                                            >
+                                                            <button onClick={(e) => handleDeleteTask(e, task.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">
                                                                 <Trash2 size={16} />
                                                             </button>
                                                         </div>
@@ -462,9 +419,15 @@ const MaintenancePlans: React.FC = () => {
 
                                             {expandedTasks.has(task.id) && (
                                                 <div className="mt-3 bg-gray-50 dark:bg-gray-900/50 p-3 rounded text-sm text-gray-600 dark:text-gray-300 border border-gray-100 dark:border-gray-700">
-                                                    <ul className="list-disc pl-5 space-y-1">
+                                                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Subtarefas:</p>
+                                                    <ul className="list-decimal pl-5 space-y-1">
                                                         {task.subtasks.map((sub, idx) => <li key={idx}>{sub}</li>)}
                                                     </ul>
+                                                    <div className="mt-2 text-xs flex gap-4 pt-2 border-t dark:border-gray-700">
+                                                        <div><span className="font-bold">Class 1:</span> {task.classification1}</div>
+                                                        <div><span className="font-bold">Class 2:</span> {task.classification2}</div>
+                                                        <div><span className="font-bold">Tipo:</span> {task.task_type}</div>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -478,13 +441,108 @@ const MaintenancePlans: React.FC = () => {
         )}
       </div>
 
+      {/* ✅ MODAL DE EDIÇÃO COMPLETAMENTE DETALHADO */}
       {editingTask && (
         <Modal isOpen={true} onClose={() => setEditingTask(null)} title="Editar Tarefa">
-            <div className="p-4 space-y-4">
-                <input value={editingTask.title} onChange={e => setEditingTask({...editingTask, title: e.target.value})} className="w-full p-2 border rounded" placeholder="Título" />
-                <div className="flex justify-end gap-2 pt-4">
-                    <button onClick={() => setEditingTask(null)} className="px-4 py-2 bg-gray-200 rounded">Cancelar</button>
-                    <button onClick={handleSaveTask} className="px-4 py-2 bg-blue-600 text-white rounded font-bold">Salvar</button>
+            <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
+                {/* Título */}
+                <div>
+                    <label className="block text-sm font-bold mb-1">Título da Tarefa</label>
+                    <input 
+                        value={editingTask.title} 
+                        onChange={e => setEditingTask({...editingTask, title: e.target.value})} 
+                        className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" 
+                        placeholder="Ex: Limpeza de Inversores" 
+                    />
+                </div>
+                
+                {/* Grid de Detalhes */}
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-bold mb-1">Frequência (Dias)</label>
+                        <input 
+                            type="number" 
+                            value={editingTask.frequency_days} 
+                            onChange={e => setEditingTask({...editingTask, frequency_days: Number(e.target.value)})} 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" 
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold mb-1">Duração Est. (Min)</label>
+                        <input 
+                            type="number" 
+                            value={editingTask.estimated_duration_minutes} 
+                            onChange={e => setEditingTask({...editingTask, estimated_duration_minutes: Number(e.target.value)})} 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" 
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold mb-1">Criticidade</label>
+                        <select 
+                            value={editingTask.criticality} 
+                            onChange={e => setEditingTask({...editingTask, criticality: e.target.value})} 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
+                        >
+                            <option value="Baixa">Baixa</option>
+                            <option value="Média">Média</option>
+                            <option value="Alta">Alta</option>
+                            <option value="Urgente">Urgente</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold mb-1">Tipo de Tarefa</label>
+                        <select 
+                            value={editingTask.task_type} 
+                            onChange={e => setEditingTask({...editingTask, task_type: e.target.value})} 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
+                        >
+                            <option value="Preventiva">Preventiva</option>
+                            <option value="Corretiva">Corretiva</option>
+                            <option value="Preditiva">Preditiva</option>
+                            <option value="Inspeção">Inspeção</option>
+                            <option value="Limpeza">Limpeza</option>
+                        </select>
+                    </div>
+                </div>
+
+                {/* Classificações */}
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-bold mb-1">Classificação 1</label>
+                        <input 
+                            value={editingTask.classification1 || ''} 
+                            onChange={e => setEditingTask({...editingTask, classification1: e.target.value})} 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" 
+                            placeholder="Ex: Elétrica"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold mb-1">Classificação 2</label>
+                        <input 
+                            value={editingTask.classification2 || ''} 
+                            onChange={e => setEditingTask({...editingTask, classification2: e.target.value})} 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" 
+                            placeholder="Ex: Média Tensão"
+                        />
+                    </div>
+                </div>
+
+                {/* Subtarefas */}
+                <div>
+                    <label className="block text-sm font-bold mb-1">Subtarefas / Checklist (uma por linha)</label>
+                    <textarea 
+                        value={editingTask.subtasks?.join('\n')} 
+                        onChange={e => setEditingTask({...editingTask, subtasks: e.target.value.split('\n')})} 
+                        className="w-full p-2 border rounded h-32 dark:bg-gray-700 dark:text-white font-mono text-sm" 
+                        placeholder="Item 1&#10;Item 2&#10;Item 3"
+                    />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-4 border-t dark:border-gray-700">
+                    <button onClick={() => setEditingTask(null)} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded">Cancelar</button>
+                    <button onClick={handleSaveTask} className="px-4 py-2 bg-blue-600 text-white rounded font-bold flex items-center gap-2">
+                        <Save size={16} /> Salvar Alterações
+                    </button>
                 </div>
             </div>
         </Modal>

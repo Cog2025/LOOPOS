@@ -102,9 +102,9 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   const handleAddLog = (e: React.FormEvent) => {
       e.preventDefault();
       if(newLog.trim()) {
-          addOSLog(os.id, {
-              authorId: user?.id || 'Sistema',
-              comment: newLog
+          addOSLog(os.id, { 
+              authorId: user?.id || 'Sistema', 
+              comment: newLog 
           });
           setNewLog('');
       }
