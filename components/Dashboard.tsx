@@ -45,16 +45,19 @@ const Dashboard: React.FC = () => {
 
   // --- FILTROS DE BUSCA ---
   const filteredOSList = osList.filter(os => {
-    const searchLower = searchTerm.toLowerCase();
-    const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
-    const technicianName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
+    // Helper para normalizar texto (remove acentos e põe em minúsculo)
+    const normalize = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const searchNorm = normalize(searchTerm);
+
+    const plantName = plants.find(p => p.id === os.plantId)?.name || '';
+    const technicianName = users.find(u => u.id === os.technicianId)?.name || '';
     
     return (
-      os.title.toLowerCase().includes(searchLower) ||
-      os.id.toLowerCase().includes(searchLower) ||
-      plantName.includes(searchLower) ||
-      technicianName.includes(searchLower) ||
-      (os.activity && os.activity.toLowerCase().includes(searchLower))
+      normalize(os.title).includes(searchNorm) ||
+      normalize(os.id).includes(searchNorm) ||
+      normalize(plantName).includes(searchNorm) ||
+      normalize(technicianName).includes(searchNorm) ||
+      (os.activity && normalize(os.activity).includes(searchNorm))
     );
   });
 

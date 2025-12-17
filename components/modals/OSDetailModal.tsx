@@ -155,8 +155,11 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const canEdit = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR;
-  const canDelete = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
+  // Permite edição para Admin, Operador ou se for o Coordenador da usina da OS
+  const canEdit = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
+  
+  // Permite exclusão para Admin, Operador ou se for o Coordenador da usina da OS
+  const canDelete = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
 
   if (!isOpen) return null;
 

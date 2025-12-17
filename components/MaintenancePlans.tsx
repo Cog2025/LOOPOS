@@ -44,7 +44,8 @@ const MaintenancePlans: React.FC = () => {
     return false;
   }, [user, selectedPlantId, currentPlant]);
 
-  const canEditImplemented = user?.role === Role.ADMIN;
+  // Permite editar se for Admin OU se for o Coordenador responsável por esta usina
+  const canEditImplemented = user?.role === Role.ADMIN || (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
 
   // --- FILTROS ---
   const availableClients = useMemo(() => {
@@ -111,6 +112,18 @@ const MaintenancePlans: React.FC = () => {
       await createPlantTask(selectedPlantId, { plantId: selectedPlantId, asset_category: newAssetName, title: 'Nova Tarefa', task_type: 'Preventiva', criticality: 'Média', frequency_days: 30, subtasks: [], active: true });
       setNewAssetName(''); setIsAddingAsset(false); fetchPlantPlan(selectedPlantId);
   };
+  // Função para renomear o ativo (categoria) e atualizar todas as tarefas associadas
+  const handleRenameAsset = async (oldName: string) => {
+      if (!canEditImplemented) return;
+      const newName = prompt("Novo nome para o ativo:", oldName);
+      if (newName && newName !== oldName) {
+          const tasksToUpdate = planData.filter(t => t.asset_category === oldName);
+          // Atualiza todas as tarefas que pertencem a este ativo
+          await Promise.all(tasksToUpdate.map(t => updatePlantTask(t.id, { ...t, asset_category: newName })));
+          fetchPlantPlan(selectedPlantId);
+      }
+  };
+  
   const handleAddTaskToAsset = async (assetName: string) => {
       await createPlantTask(selectedPlantId, { plantId: selectedPlantId, asset_category: assetName, title: 'Nova Tarefa', task_type: 'Preventiva', criticality: 'Média', frequency_days: 30, subtasks: [], active: true });
       fetchPlantPlan(selectedPlantId);
@@ -139,10 +152,29 @@ const MaintenancePlans: React.FC = () => {
             </div>
         </div>
         <div className="flex gap-2 w-full md:w-auto">
-            <button onClick={handleDownloadPlantPDF} disabled={!selectedPlantId || planData.length === 0} className="flex-1 md:flex-none px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2"><Download size={18} /> Baixar PDF</button>
-            <button onClick={() => setShowLibrary(true)} className={`flex-1 md:flex-none px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 ${!canManageLibrary ? 'opacity-70 cursor-not-allowed' : ''}`} disabled={!canManageLibrary}><BookOpen size={18} /> Biblioteca</button>
-            {canDownloadLibrary && <button onClick={handleDownloadLibraryPDF} disabled={isLoading} className="flex-1 md:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 disabled:opacity-50">{isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <FileText size={18} />} PDF Biblio.</button>}
-            {canImplementPlan && <button onClick={() => { if(confirm("Inicializar com Padrão Loop?")) initializePlantPlan(selectedPlantId, 'STANDARD'); }} disabled={!selectedPlantId} className="flex-1 md:flex-none px-4 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2"><Settings size={18} /> Inicializar Plano</button>}
+            {/* Botão sempre visível (apenas desabilitado se não tiver dados) */}
+            <button onClick={handleDownloadPlantPDF} disabled={!selectedPlantId || planData.length === 0} className="flex-1 md:flex-none px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2"><Download size={18} /> Plano da Usina</button>
+            
+            {/* Botão visível apenas para quem pode baixar a biblioteca */}
+            {canDownloadLibrary && (
+                <button onClick={handleDownloadLibraryPDF} disabled={isLoading} className="flex-1 md:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 disabled:opacity-50">
+                    {isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <Download size={18} />} Plano Padrão LOOP
+                </button>
+            )}
+            
+            {/* ✅ OCULTA o botão "Editar" se não tiver permissão (canManageLibrary) */}
+            {canManageLibrary && (
+                <button onClick={() => setShowLibrary(true)} className="flex-1 md:flex-none px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2">
+                    <BookOpen size={18} /> Editar Plano Padrão LOOP
+                </button>
+            )}
+
+            {/* ✅ OCULTA o botão "Inicializar" se não tiver permissão (canImplementPlan) */}
+            {canImplementPlan && (
+                <button onClick={() => { if(confirm("Inicializar com Padrão Loop?")) initializePlantPlan(selectedPlantId, 'STANDARD'); }} disabled={!selectedPlantId} className="flex-1 md:flex-none px-4 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2">
+                    <Settings size={18} /> Inicializar Plano
+                </button>
+            )}
         </div>
       </div>
 
@@ -162,7 +194,25 @@ const MaintenancePlans: React.FC = () => {
                     return (
                         <div key={asset} className="mb-4 border dark:border-gray-700 rounded-lg overflow-hidden shadow-sm">
                             <div className="flex items-center justify-between p-3 bg-gray-800 text-white cursor-pointer hover:bg-gray-700" onClick={() => toggleAsset(asset)}>
-                                <div className="flex items-center gap-3">{isAssetExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}<h3 className="font-bold text-sm uppercase">{asset}</h3><span className="text-xs bg-gray-600 px-2 py-0.5 rounded-full">{tasks.length} tarefas</span></div>
+                                <div className="flex items-center gap-3">
+                                    {isAssetExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                    <h3 className="font-bold text-sm uppercase tracking-wide">{asset}</h3>
+                                    
+                                    {/* Botão para editar nome do Ativo */}
+                                    {canEditImplemented && (
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleRenameAsset(asset); }}
+                                            className="p-1 text-gray-400 hover:text-white transition-colors hover:bg-gray-600 rounded"
+                                            title="Renomear Ativo"
+                                        >
+                                            <Edit size={14} />
+                                        </button>
+                                    )}
+
+                                    <span className="text-xs bg-gray-600 px-2 py-0.5 rounded-full font-medium">
+                                        {tasks.length} tarefas
+                                    </span>
+                                </div>
                                 {canEditImplemented && <button onClick={(e) => { e.stopPropagation(); handleAddTaskToAsset(asset); }} className="p-1 hover:bg-gray-600 rounded text-white"><Plus size={16} /></button>}
                             </div>
                             {isAssetExpanded && (
