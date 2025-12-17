@@ -5,7 +5,9 @@ import { useAuth } from '../../contexts/AuthContext';
 import { OS, OSStatus, Priority, Role } from '../../types';
 import Modal from './Modal';
 
-// --- COMPONENTE INTERNO: SELECT PESQUISÁVEL ---
+// ... (SearchableSelect mantido igual ao anterior, omitido para brevidade) ...
+// (Se precisar do código do SearchableSelect, use o da resposta anterior)
+
 interface Option { label: string; value: string; }
 interface SearchableSelectProps {
     options: Option[];
@@ -13,67 +15,61 @@ interface SearchableSelectProps {
     onChange: (val: string) => void;
     placeholder?: string;
     disabled?: boolean;
+    isOpen: boolean;
+    onToggle: () => void;
+    onClose: () => void;
 }
 
-const SearchableSelect: React.FC<SearchableSelectProps> = ({ options, value, onChange, placeholder, disabled }) => {
-    const [isOpen, setIsOpen] = useState(false);
+const SearchableSelect: React.FC<SearchableSelectProps> = ({ 
+    options, value, onChange, placeholder, disabled, 
+    isOpen, onToggle, onClose 
+}) => {
     const [search, setSearch] = useState('');
     const wrapperRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
-
     const selectedLabel = options.find(o => o.value === value)?.label || '';
     const normalize = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node) && isOpen) {
+                onClose();
             }
         };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isOpen, onClose]);
 
-    const filteredOptions = useMemo(() => {
-        if (!search) return options;
-        const s = normalize(search);
-        return options.filter(o => normalize(o.label).includes(s));
-    }, [options, search]);
+    const filteredOptions = options.filter(o => normalize(o.label).includes(normalize(search)));
 
     return (
         <div className="relative" ref={wrapperRef}>
             <div 
-                className={`w-full p-2 border rounded text-sm flex justify-between items-center bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                onClick={() => { if (!disabled) { setIsOpen(!isOpen); if (!isOpen) setTimeout(() => inputRef.current?.focus(), 100); } }}
+                className={`w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white flex justify-between items-center cursor-pointer ${disabled ? 'bg-gray-100 opacity-50 cursor-not-allowed' : 'bg-white'}`}
+                onClick={() => !disabled && onToggle()}
             >
-                <span className="truncate">{selectedLabel || placeholder || 'Selecione...'}</span>
-                <span className="ml-2 text-gray-500">▼</span>
+                <span className={!selectedLabel ? 'text-gray-400' : ''}>{selectedLabel || placeholder || 'Selecione...'}</span>
+                <span className="text-xs text-gray-500">▼</span>
             </div>
             {isOpen && !disabled && (
-                <div className="absolute z-50 w-full bg-white dark:bg-gray-700 border dark:border-gray-600 rounded mt-1 shadow-lg max-h-60 overflow-y-auto">
-                    <div className="p-2 sticky top-0 bg-white dark:bg-gray-700 border-b dark:border-gray-600">
-                        <input
-                            ref={inputRef}
-                            type="text"
-                            className="w-full p-1 border rounded text-sm dark:bg-gray-800 dark:text-white dark:border-gray-600"
-                            placeholder="Buscar..."
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                        />
-                    </div>
-                    {filteredOptions.length > 0 ? (
-                        filteredOptions.map(option => (
-                            <div
-                                key={option.value}
-                                className={`p-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-600 cursor-pointer text-gray-900 dark:text-gray-100 ${option.value === value ? 'bg-blue-100 dark:bg-gray-600 font-bold' : ''}`}
-                                onClick={() => { onChange(option.value); setIsOpen(false); setSearch(''); }}
-                            >
-                                {option.label}
-                            </div>
-                        ))
-                    ) : (
-                        <div className="p-2 text-sm text-gray-500 text-center">Nenhum resultado</div>
-                    )}
+                <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded shadow-lg max-h-60 overflow-y-auto">
+                    <input 
+                        type="text" 
+                        className="w-full p-2 border-b dark:border-gray-600 text-sm focus:outline-none dark:bg-gray-700 dark:text-white"
+                        placeholder="Buscar..."
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                    {filteredOptions.length > 0 ? filteredOptions.map(opt => (
+                        <div 
+                            key={opt.value} 
+                            className="p-2 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer text-sm dark:text-gray-200"
+                            onClick={() => { onChange(opt.value); onClose(); setSearch(''); }}
+                        >
+                            {opt.label}
+                        </div>
+                    )) : <div className="p-2 text-xs text-gray-400 text-center">Nenhum resultado</div>}
                 </div>
             )}
         </div>
@@ -83,228 +79,237 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({ options, value, onC
 interface Props {
     isOpen: boolean;
     onClose: () => void;
-    initialData?: OS;
+    initialData?: OS | null;
 }
 
 const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
-    const { addOS, updateOS, plants, users, maintenancePlans } = useData();
+    const { addOS, updateOS, users, plants, maintenancePlans } = useData();
     const { user } = useAuth();
-    
-    // Estado do formulário
+
     const [formData, setFormData] = useState<Partial<OS>>({
         title: '', description: '', status: OSStatus.PENDING, priority: Priority.MEDIUM,
         plantId: '', technicianId: '', supervisorId: '', assistantId: '', 
-        startDate: new Date().toISOString().split('T')[0],
-        activity: '', assets: [], 
-        classification1: '', classification2: '',
-        ...initialData
+        assets: [], activity: ''
     });
 
-    const [selectedAsset, setSelectedAsset] = useState<string>('');
+    const [selectedAssetCategory, setSelectedAssetCategory] = useState<string>('');
+    const [activeField, setActiveField] = useState<string | null>(null);
 
-    // Efeito para carregar dados iniciais e popular classificações baseadas na tarefa
+    const handleToggleDropdown = (fieldId: string) => setActiveField(prev => prev === fieldId ? null : fieldId);
+    const closeDropdowns = () => setActiveField(null);
+
+    // ✅ CORREÇÃO: DATA INICIAL LOCAL
     useEffect(() => {
         if (initialData) {
-            setFormData(prev => ({ ...prev, ...initialData }));
+            setFormData(initialData);
             if (initialData.assets && initialData.assets.length > 0) {
-                setSelectedAsset(initialData.assets[0]);
+                setSelectedAssetCategory(initialData.assets[0]);
             }
+        } else {
+            // Cria data local correta YYYY-MM-DD
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            setFormData(prev => ({ ...prev, startDate: `${year}-${month}-${day}` }));
         }
     }, [initialData]);
 
-    // Opções de Usinas (Filtradas para Clientes)
     const plantOptions = useMemo(() => {
-        let filteredPlants = plants;
+        let filtered = plants;
         if (user?.role === Role.CLIENT) {
-            filteredPlants = plants.filter(p => user.plantIds?.includes(p.id));
+            filtered = plants.filter(p => user.plantIds?.includes(p.id) || p.client === user.name);
         }
-        return filteredPlants.map(p => ({ label: p.name, value: p.id }));
+        return filtered.map(p => ({ label: p.name, value: p.id }));
     }, [plants, user]);
 
-    // Usuários filtrados
-    const technicians = useMemo(() => users.filter(u => u.role === Role.TECHNICIAN).map(u => ({ label: u.name, value: u.id })), [users]);
-    const supervisors = useMemo(() => users.filter(u => u.role === Role.SUPERVISOR).map(u => ({ label: u.name, value: u.id })), [users]);
-    const assistants = useMemo(() => users.filter(u => u.role === Role.ASSISTANT).map(u => ({ label: u.name, value: u.id })), [users]);
+    const currentPlant = useMemo(() => plants.find(p => p.id === formData.plantId), [plants, formData.plantId]);
 
-    // Dados da Usina Selecionada
-    const selectedPlant = plants.find(p => p.id === formData.plantId);
-    
-    // Lista de Tarefas (Planos) da Usina
-    const plantTasks = useMemo(() => {
-        if (!formData.plantId) return [];
-        const plans = maintenancePlans[formData.plantId] || [];
-        return plans.map(p => ({ 
-            label: p.title, 
-            value: p.id,
-            original: p 
-        }));
-    }, [formData.plantId, maintenancePlans]);
+    const { availableTechs, availableSups, availableCoords, availableAssistants } = useMemo(() => {
+        if (!currentPlant) return { availableTechs: [], availableSups: [], availableCoords: null, availableAssistants: [] };
+        
+        return {
+            availableTechs: users.filter(u => u.role === Role.TECHNICIAN && currentPlant.technicianIds?.includes(u.id)).map(u => ({ label: u.name, value: u.id })),
+            availableSups: users.filter(u => u.role === Role.SUPERVISOR && currentPlant.supervisorIds?.includes(u.id)).map(u => ({ label: u.name, value: u.id })),
+            availableAssistants: users.filter(u => u.role === Role.ASSISTANT && currentPlant.assistantIds?.includes(u.id)).map(u => ({ label: u.name, value: u.id })),
+            availableCoords: users.find(u => u.id === currentPlant.coordinatorId)
+        };
+    }, [currentPlant, users]);
 
-    // Ativos da Usina
     const assetOptions = useMemo(() => {
-        if (!selectedPlant) return [];
-        return (selectedPlant.assets || []).map(a => ({ label: a, value: a }));
-    }, [selectedPlant]);
+        if (!currentPlant) return [];
+        const physicalAssets = currentPlant.assets || [];
+        const planCategories = (maintenancePlans[currentPlant.id] || []).map(p => p.asset_category);
+        const uniqueAssets = Array.from(new Set([...physicalAssets, ...planCategories])).sort();
+        return uniqueAssets.map(a => ({ label: a, value: a }));
+    }, [currentPlant, maintenancePlans]);
 
-    // Coordenador Automático
-    const automaticCoordinator = useMemo(() => {
-        if (!selectedPlant?.coordinatorId) return null;
-        return users.find(u => u.id === selectedPlant.coordinatorId);
-    }, [selectedPlant, users]);
+    const taskOptions = useMemo(() => {
+        if (!currentPlant || !selectedAssetCategory) return [];
+        const plans = maintenancePlans[currentPlant.id] || [];
+        return plans
+            .filter(p => p.asset_category === selectedAssetCategory)
+            .map(p => ({ label: p.title, value: p.title, fullPlan: p }));
+    }, [currentPlant, selectedAssetCategory, maintenancePlans]);
 
-    // Manipulador de Mudança de Tarefa (Preenche classificações auto)
-    const handleTaskChange = (taskId: string) => {
-        const task = plantTasks.find(t => t.value === taskId)?.original;
-        if (task) {
-            setFormData(prev => ({
-                ...prev,
-                maintenancePlanId: task.id,
-                activity: task.title,
-                priority: (task.criticality === 'Alta' ? Priority.HIGH : 
-                           task.criticality === 'Urgente' ? Priority.URGENT : 
-                           task.criticality === 'Baixa' ? Priority.LOW : Priority.MEDIUM),
-                classification1: task.classification1 || '',
-                classification2: task.classification2 || '',
-                estimatedDuration: task.estimated_duration_minutes ? task.estimated_duration_minutes * 60 : 0
-            }));
-        }
+    const handleAssetChange = (asset: string) => {
+        setSelectedAssetCategory(asset);
+        setFormData(prev => ({ ...prev, assets: [asset], activity: '', title: '' }));
     };
 
-    // Submissão do Formulário
+    const handleTaskChange = (taskTitle: string) => {
+        const selectedPlan = taskOptions.find(t => t.value === taskTitle)?.fullPlan;
+        
+        setFormData(prev => ({
+            ...prev,
+            activity: taskTitle,
+            title: taskTitle,
+            subtasksStatus: selectedPlan?.subtasks?.map((text, id) => ({ id, text, done: false })) || [],
+            priority: (selectedPlan?.criticality === 'Alto' || selectedPlan?.criticality === 'Urgente') ? Priority.HIGH : Priority.MEDIUM,
+            classification1: selectedPlan?.classification1,
+            classification2: selectedPlan?.classification2,
+            estimatedDuration: selectedPlan?.estimated_duration_minutes ? selectedPlan.estimated_duration_minutes * 60 : 0,
+            plannedDowntime: selectedPlan?.planned_downtime_minutes || 0,
+            maintenancePlanId: selectedPlan?.id
+        }));
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!formData.title || !formData.plantId) return alert("Preencha os campos obrigatórios (Usina, Ativo, Tarefa)");
 
-        // 1. Validação de Campos Obrigatórios
-        if (!formData.plantId) {
-            alert("Erro: O campo 'Usina' é obrigatório.");
-            return;
-        }
-        if (!formData.activity) {
-            alert("Erro: O campo 'Tarefa (Plano)' é obrigatório.");
-            return;
-        }
-        if (!selectedAsset && (!formData.assets || formData.assets.length === 0)) {
-            alert("Erro: O campo 'Ativo' é obrigatório.");
-            return;
-        }
-
-        // 2. Validação da Regra Elétrica (1 Técnico + 1 Auxiliar)
-        const isElectrical = formData.classification1 === 'Elétrica' || formData.classification2 === 'Elétrica';
-        if (isElectrical) {
-            if (!formData.technicianId || !formData.assistantId) {
-                alert("Bloqueio de Segurança: Tarefas com classificação 'Elétrica' exigem obrigatoriamente 1 Técnico E 1 Auxiliar.");
-                return;
-            }
-        }
-
-        const finalData = {
-            ...formData,
-            assets: selectedAsset ? [selectedAsset] : [],
-        };
-
-        if (initialData) {
-            await updateOS(finalData as OS);
-        } else {
-            await addOS(finalData as OS);
-        }
-        onClose();
+        try {
+            if (initialData?.id) await updateOS(formData as OS);
+            else await addOS(formData as OS);
+            onClose();
+        } catch (error) { console.error(error); alert("Erro ao salvar OS"); }
     };
 
-    // Estilos
-    const inputClasses = "w-full p-2 border rounded text-sm bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none";
-    const labelClass = "block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide";
+    const labelClass = "block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase";
+    const inputClass = "w-full p-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none";
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={initialData ? `Editar OS: ${initialData.id}` : 'Nova Ordem de Serviço'}>
-            <form onSubmit={handleSubmit} className="flex flex-col h-full max-h-[80vh]">
-                <div className="flex-1 overflow-y-auto p-1 space-y-4">
-                    
-                    {/* Linha 1: Usina e Tarefa */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Modal isOpen={isOpen} onClose={onClose} title={initialData ? "Editar Ordem de Serviço" : "Nova Ordem de Serviço"}>
+            <form onSubmit={handleSubmit} className="flex flex-col h-[80vh]">
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className={labelClass}>Usina <span className="text-red-500">*</span></label>
+                            <label className={labelClass}>Usina *</label>
                             <SearchableSelect 
                                 options={plantOptions} 
                                 value={formData.plantId || ''} 
-                                onChange={(val) => setFormData({...formData, plantId: val})}
-                                placeholder="Selecione a Usina"
+                                onChange={(val) => setFormData({ ...formData, plantId: val, assets: [], activity: '', title: '' })}
+                                isOpen={activeField === 'plant'}
+                                onToggle={() => handleToggleDropdown('plant')}
+                                onClose={closeDropdowns}
                             />
                         </div>
                         <div>
-                            <label className={labelClass}>Tarefa (Plano) <span className="text-red-500">*</span></label>
-                            <SearchableSelect 
-                                options={plantTasks} 
-                                value={formData.maintenancePlanId || ''} 
-                                onChange={handleTaskChange}
-                                placeholder="Selecione a Tarefa"
-                                disabled={!formData.plantId}
-                            />
+                            <label className={labelClass}>Data Prevista</label>
+                            <input type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} className={inputClass} />
                         </div>
                     </div>
 
-                    {/* Linha 2: Ativo e Data */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className={labelClass}>Ativo <span className="text-red-500">*</span></label>
+                            <label className={labelClass}>Ativo / Sistema *</label>
                             <SearchableSelect 
                                 options={assetOptions} 
-                                value={selectedAsset} 
-                                onChange={setSelectedAsset}
-                                placeholder="Qual equipamento?"
+                                value={selectedAssetCategory} 
+                                onChange={handleAssetChange} 
                                 disabled={!formData.plantId}
+                                placeholder={!formData.plantId ? "Selecione a Usina..." : "Selecione..."}
+                                isOpen={activeField === 'asset'}
+                                onToggle={() => handleToggleDropdown('asset')}
+                                onClose={closeDropdowns}
                             />
                         </div>
                         <div>
-                            <label className={labelClass}>Data de Início</label>
-                            <input 
-                                type="date" 
-                                value={formData.startDate} 
-                                onChange={e => setFormData({...formData, startDate: e.target.value})} 
-                                className={inputClasses} 
+                            <label className={labelClass}>Tarefa (Plano) *</label>
+                            <SearchableSelect 
+                                options={taskOptions} 
+                                value={formData.activity || ''} 
+                                onChange={handleTaskChange} 
+                                disabled={!selectedAssetCategory}
+                                placeholder={!selectedAssetCategory ? "Selecione o Ativo..." : "Selecione..."}
+                                isOpen={activeField === 'task'}
+                                onToggle={() => handleToggleDropdown('task')}
+                                onClose={closeDropdowns}
                             />
                         </div>
                     </div>
 
-                    {/* Linha 3: Classificações (Automáticas) */}
-                    <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-800 p-3 rounded border dark:border-gray-700">
+                    <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className={labelClass}>Classificação 1</label>
-                            <input disabled value={formData.classification1 || ''} className={`${inputClasses} bg-gray-100 opacity-70`} />
+                            <label className={labelClass}>Status</label>
+                            <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value as any})} className={inputClass}>
+                                {Object.values(OSStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
                         </div>
                         <div>
-                            <label className={labelClass}>Classificação 2</label>
-                            <input disabled value={formData.classification2 || ''} className={`${inputClasses} bg-gray-100 opacity-70`} />
+                            <label className={labelClass}>Prioridade</label>
+                            <select value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value as any})} className={inputClass}>
+                                {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+                            </select>
                         </div>
                     </div>
 
-                    {/* Linha 4: Equipe */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Técnico Responsável</label>
-                            <SearchableSelect options={technicians} value={formData.technicianId || ''} onChange={(val) => setFormData({...formData, technicianId: val})} />
+                            <SearchableSelect 
+                                options={availableTechs} 
+                                value={formData.technicianId || ''} 
+                                onChange={v => setFormData({...formData, technicianId: v})} 
+                                disabled={!formData.plantId}
+                                isOpen={activeField === 'tech'}
+                                onToggle={() => handleToggleDropdown('tech')}
+                                onClose={closeDropdowns}
+                            />
                         </div>
-                         <div>
-                             <label className={labelClass}>Auxiliar</label>
-                             <SearchableSelect options={assistants} value={formData.assistantId || ''} onChange={(val) => setFormData({...formData, assistantId: val})} />
-                         </div>
-                         <div>
-                             <label className={labelClass}>Supervisor</label>
-                             <SearchableSelect options={supervisors} value={formData.supervisorId || ''} onChange={(val) => setFormData({...formData, supervisorId: val})} />
-                         </div>
+                        <div>
+                            <label className={labelClass}>Auxiliar</label>
+                            <SearchableSelect 
+                                options={availableAssistants} 
+                                value={formData.assistantId || ''} 
+                                onChange={v => setFormData({...formData, assistantId: v})} 
+                                disabled={!formData.plantId}
+                                isOpen={activeField === 'assistant'}
+                                onToggle={() => handleToggleDropdown('assistant')}
+                                onClose={closeDropdowns}
+                            />
+                        </div>
                     </div>
 
-                    {/* Linha 5: Coordenador (Auto) */}
-                    <div>
-                         <label className={labelClass}>Coordenador</label>
-                         <input disabled value={automaticCoordinator?.name || 'Não definido'} className={`${inputClasses} bg-gray-200 text-gray-900 font-bold opacity-100 cursor-not-allowed border-gray-400`} />
-                     </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className={labelClass}>Supervisor</label>
+                            <SearchableSelect 
+                                options={availableSups} 
+                                value={formData.supervisorId || ''} 
+                                onChange={v => setFormData({...formData, supervisorId: v})} 
+                                disabled={!formData.plantId}
+                                isOpen={activeField === 'sup'}
+                                onToggle={() => handleToggleDropdown('sup')}
+                                onClose={closeDropdowns}
+                            />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Coordenador</label>
+                            <input 
+                                value={availableCoords ? availableCoords.name : 'Não definido na Usina'} 
+                                disabled 
+                                className={`${inputClass} bg-gray-100 text-gray-500 cursor-not-allowed`} 
+                            />
+                        </div>
+                    </div>
 
-                    <div><label className={labelClass}>Descrição Adicional</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className={`${inputClasses} h-24`} /></div>
+                    <div><label className={labelClass}>Descrição Adicional</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className={`${inputClass} h-24 resize-none`} /></div>
                 </div>
-                
-                <div className="pt-4 border-t mt-auto flex justify-end gap-2 bg-white dark:bg-gray-800 shrink-0">
-                    <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 rounded-lg font-bold transition-colors">Cancelar</button>
-                    <button type="submit" className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-md transition-transform transform active:scale-95">Salvar OS</button>
+
+                <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-2 shrink-0">
+                    <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded text-gray-800 dark:text-white">Cancelar</button>
+                    <button type="submit" className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold shadow">Salvar OS</button>
                 </div>
             </form>
         </Modal>

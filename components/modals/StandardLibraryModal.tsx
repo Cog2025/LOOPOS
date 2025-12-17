@@ -1,9 +1,10 @@
-// File: src/components/modals/StandardLibraryModal.tsx
+// File: components/modals/StandardLibraryModal.tsx
 import React, { useEffect, useState, useMemo } from 'react';
 import Modal from './Modal';
 import { useData } from '../../contexts/DataContext';
 import { TaskTemplate } from '../../types';
-// Supondo que STANDARD_ASSETS esteja definido em algum lugar, senão defino um fallback
+import { Trash2, Edit, ChevronDown, ChevronRight, Save, Plus } from 'lucide-react';
+
 const STANDARD_ASSETS = ["Inversores", "Transformadores", "Ar Condicionado", "Estruturas", "Monitoramento", "Limpeza", "Jardinagem", "Cercamento", "Drenagem", "Vias de Acesso", "Edificações"];
 
 interface Props {
@@ -20,234 +21,262 @@ const StandardLibraryModal: React.FC<Props> = ({ isOpen, onClose }) => {
     // Inicia recolhido
     const [expandedAssets, setExpandedAssets] = useState<Set<string>>(new Set());
 
-    const inputStyle = { color: 'black', backgroundColor: 'white', borderColor: '#cbd5e1' }; 
-    const inputClass = "w-full p-2 border rounded text-sm text-black bg-white focus:ring-2 focus:ring-blue-500 outline-none";
-    const labelClass = "text-[10px] font-bold text-gray-500 uppercase mb-1 block";
+    // Estilo padrão (Tailwind)
+    const inputClass = "w-full p-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none";
 
-    const [selectedAsset, setSelectedAsset] = useState<string>('');
+    useEffect(() => {
+        if (isOpen) fetchTaskTemplates();
+    }, [isOpen]);
 
-    useEffect(() => { 
-        if (isOpen) {
-            fetchTaskTemplates().then(() => {
-                setExpandedAssets(new Set());
-            });
-        }
-    }, [isOpen, taskTemplates.length]);
-
-    const availableAssets = useMemo(() => {
-        const fromDB = taskTemplates.map(t => t.asset_category);
-        const combined = new Set([...STANDARD_ASSETS, ...fromDB]);
-        return Array.from(combined).sort();
-    }, [taskTemplates]);
-
-    // ✅ Lógica de Agrupamento Original Mantida
     const groupedTasks = useMemo(() => {
         const groups: Record<string, TaskTemplate[]> = {};
-        
-        // 1. Inicializa grupos vazios
-        const assetsToInitialize = selectedAsset ? [selectedAsset] : availableAssets;
-        assetsToInitialize.forEach(asset => {
-            groups[asset] = [];
-        });
-        
-        // 2. Distribui tarefas
-        const filtered = taskTemplates.filter(t => 
-            (searchTerm ? t.title.toLowerCase().includes(searchTerm.toLowerCase()) : true) &&
-            (selectedAsset ? t.asset_category === selectedAsset : true)
-        );
-
-        filtered.forEach(task => {
-            const asset = task.asset_category || 'Geral';
-            // Garante que exista (para ativos fora do padrão)
+        taskTemplates.forEach(t => {
+            const asset = t.asset_category || 'Outros';
             if (!groups[asset]) groups[asset] = [];
-            groups[asset].push(task);
+            groups[asset].push(t);
         });
+        return groups;
+    }, [taskTemplates]);
 
-        return Object.keys(groups).sort().reduce((acc, key) => {
-            acc[key] = groups[key];
-            return acc;
-        }, {} as Record<string, TaskTemplate[]>);
-    }, [taskTemplates, searchTerm, selectedAsset, availableAssets]);
-
-    const toggleGroup = (asset: string) => {
+    const toggleAsset = (asset: string) => {
         setExpandedAssets(prev => {
             const next = new Set(prev);
-            next.has(asset) ? next.delete(asset) : next.add(asset);
+            if (next.has(asset)) next.delete(asset); else next.add(asset);
             return next;
         });
     };
 
-    // ✅ CORREÇÃO CRÍTICA DO ERRO 422: Conversão de Tipos
     const handleSave = async () => {
-        const payload = { 
-            ...editingItem, 
-            plan_code: editingItem.plan_code || `STD-${Date.now()}`, // Garante código
-            // Converte explicitamente para número para evitar "422 Unprocessable Content"
-            frequency_days: parseInt(String(editingItem.frequency_days || 0), 10),
-            estimated_duration_minutes: parseInt(String(editingItem.estimated_duration_minutes || 0), 10),
-            // Garante campos obrigatórios
-            asset_category: editingItem.asset_category || 'Geral',
-            title: editingItem.title || 'Nova Tarefa',
-            task_type: editingItem.task_type || 'Preventiva',
-            criticality: editingItem.criticality || 'Média',
-            subtasks: editingItem.subtasks || []
-        };
-
-        try {
-            if (payload.id) await updateTemplate(payload.id, payload);
-            else await addTemplate(payload);
-            
-            setIsEditing(false);
-            setEditingItem({});
-            fetchTaskTemplates();
-        } catch (error) {
-            console.error("Erro ao salvar:", error);
-            alert("Erro ao salvar o padrão.");
+        if (!editingItem.title || !editingItem.asset_category) {
+            alert("Preencha título e categoria");
+            return;
         }
+        
+        const dataToSave = {
+            ...editingItem,
+            estimated_duration_minutes: Number(editingItem.estimated_duration_minutes || 0),
+            planned_downtime_minutes: Number(editingItem.planned_downtime_minutes || 0),
+            frequency_days: Number(editingItem.frequency_days || 30)
+        } as TaskTemplate;
+
+        if (editingItem.id) {
+            await updateTemplate(editingItem.id, dataToSave);
+        } else {
+            await addTemplate(dataToSave);
+        }
+        setIsEditing(false);
+        setEditingItem({});
+        fetchTaskTemplates();
     };
 
     const handleDelete = async (id: string) => {
-        if(confirm("Excluir este padrão da biblioteca?")) {
+        if (confirm("Excluir modelo?")) {
             await deleteTemplate(id);
             fetchTaskTemplates();
         }
     };
 
-    const handleNewAssetGroup = () => {
-        const name = prompt("Nome do Novo Ativo Padrão:");
-        if (name) {
-            setEditingItem({ asset_category: name, title: "Nova Tarefa Padrão", subtasks: [] });
-            setIsEditing(true);
+    // ✅ FUNCIONALIDADE SOLICITADA: EXCLUIR ATIVO INTEIRO
+    const handleDeleteAsset = async (asset: string) => {
+        if (confirm(`ATENÇÃO: Tem certeza que deseja excluir o ativo "${asset}" e TODAS as suas tarefas da biblioteca? Esta ação não pode ser desfeita.`)) {
+            const tasksToDelete = taskTemplates.filter(t => t.asset_category === asset);
+            
+            if (tasksToDelete.length === 0) {
+                alert("Nenhuma tarefa encontrada para este ativo.");
+                return;
+            }
+
+            for (const t of tasksToDelete) {
+                await deleteTemplate(t.id);
+            }
+            
+            fetchTaskTemplates();
+            if (expandedAssets.has(asset)) {
+                const next = new Set(expandedAssets);
+                next.delete(asset);
+                setExpandedAssets(next);
+            }
         }
     };
 
-    const addSubtask = () => setEditingItem(prev => ({ ...prev, subtasks: [...(prev.subtasks || []), ""] }));
-    const updateSubtask = (idx: number, val: string) => {
-        const newSubs = [...(editingItem.subtasks || [])];
-        newSubs[idx] = val;
-        setEditingItem(prev => ({ ...prev, subtasks: newSubs }));
-    };
-    const removeSubtask = (idx: number) => {
-        setEditingItem(prev => ({ ...prev, subtasks: (prev.subtasks || []).filter((_, i) => i !== idx) }));
+    const handleNew = () => {
+        setEditingItem({ 
+            plan_code: 'STD', 
+            frequency_days: 30, 
+            estimated_duration_minutes: 30,
+            planned_downtime_minutes: 0,
+            subtasks: [],
+            asset_category: '', // Deixa vazio para forçar criar/digitar grupo
+            criticality: 'Média',
+            task_type: 'Preventiva'
+        });
+        setIsEditing(true);
     };
 
-    if (isEditing) {
-        return (
-            <Modal isOpen={isOpen} onClose={() => setIsEditing(false)} title={editingItem.id ? "Editar Padrão" : "Novo Padrão"}>
-                <div className="space-y-4 p-1 max-h-[75vh] overflow-y-auto">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="md:col-span-2"><label className={labelClass}>Título</label><input className={inputClass} style={inputStyle} value={editingItem.title || ''} onChange={e => setEditingItem({...editingItem, title: e.target.value})} autoFocus /></div>
-                        <div>
-                            <label className={labelClass}>Ativo</label>
-                            <input className={inputClass} style={inputStyle} list="assets-dl" value={editingItem.asset_category || ''} onChange={e => setEditingItem({...editingItem, asset_category: e.target.value})} />
-                            <datalist id="assets-dl">{availableAssets.map(a => <option key={a} value={a} />)}</datalist>
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 dark:bg-gray-700/30 p-3 rounded border dark:border-gray-600">
-                        <div><label className={labelClass}>Freq (Dias)</label><input type="number" className={inputClass} style={inputStyle} value={editingItem.frequency_days || ''} onChange={e => setEditingItem({...editingItem, frequency_days: Number(e.target.value)})} /></div>
-                        <div><label className={labelClass}>Duração (Min)</label><input type="number" className={inputClass} style={inputStyle} value={editingItem.estimated_duration_minutes || ''} onChange={e => setEditingItem({...editingItem, estimated_duration_minutes: Number(e.target.value)})} /></div>
-                        <div className="col-span-2"><label className={labelClass}>Tipo</label><input className={inputClass} style={inputStyle} value={editingItem.task_type || ''} onChange={e => setEditingItem({...editingItem, task_type: e.target.value})} /></div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div><label className={labelClass}>Criticidade</label><select className={inputClass} style={inputStyle} value={editingItem.criticality || 'Médio'} onChange={e => setEditingItem({...editingItem, criticality: e.target.value})}><option>Baixo</option><option>Médio</option><option>Alto</option><option>Muito alto</option></select></div>
-                        <div><label className={labelClass}>Classificação 1</label><input className={inputClass} style={inputStyle} value={editingItem.classification1 || ''} onChange={e => setEditingItem({...editingItem, classification1: e.target.value})} /></div>
-                        <div><label className={labelClass}>Classificação 2</label><input className={inputClass} style={inputStyle} value={editingItem.classification2 || ''} onChange={e => setEditingItem({...editingItem, classification2: e.target.value})} /></div>
-                    </div>
-                    <div className="border rounded-lg overflow-hidden border-gray-300 dark:border-gray-600">
-                        <div className="bg-gray-100 dark:bg-gray-700 p-2 flex justify-between items-center border-b">
-                            <label className="text-xs font-bold text-gray-600 dark:text-gray-300 uppercase">Subtarefas</label>
-                            <button onClick={addSubtask} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 font-bold shadow-sm">+ Adicionar Item</button>
-                        </div>
-                        <div className="p-2 space-y-2 bg-gray-50 dark:bg-gray-800 max-h-60 overflow-y-auto">
-                            {editingItem.subtasks?.map((st, i) => (
-                                <div key={i} className="flex gap-2 items-center group">
-                                    <span className="text-xs text-gray-400 font-mono w-6 text-right select-none">{i+1}.</span>
-                                    <input className={inputClass} style={inputStyle} value={st} onChange={e => updateSubtask(i, e.target.value)} />
-                                    <button onClick={() => removeSubtask(i)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded">✕</button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                        <button onClick={() => setIsEditing(false)} className="px-4 py-2 bg-gray-200 rounded text-gray-700 hover:bg-gray-300">Cancelar</button>
-                        <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold">Salvar Padrão</button>
-                    </div>
-                </div>
-            </Modal>
-        );
-    }
+    // Helpers de Subtarefas
+    const addSubtask = () => setEditingItem({ ...editingItem, subtasks: [...(editingItem.subtasks || []), ''] });
+    const updateSubtask = (i: number, val: string) => {
+        const sub = [...(editingItem.subtasks || [])];
+        sub[i] = val;
+        setEditingItem({ ...editingItem, subtasks: sub });
+    };
+    const removeSubtask = (i: number) => {
+        const sub = [...(editingItem.subtasks || [])];
+        sub.splice(i, 1);
+        setEditingItem({ ...editingItem, subtasks: sub });
+    };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Biblioteca Padrão LOOP`}>
-            <div className="flex flex-col h-[75vh]">
-                <div className="flex flex-wrap gap-3 mb-4 bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700 shadow-sm shrink-0 items-center justify-between">
-                    <div className="flex-1 min-w-[200px]">
-                        <select className={inputClass} style={inputStyle} value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)}>
-                            <option value="">Todos os Ativos</option>
-                            {availableAssets.map(a => <option key={a} value={a}>{a}</option>)}
-                        </select>
-                    </div>
-                    <div className="flex-[2] min-w-[200px]">
-                        <input className={inputClass} style={{...inputStyle, width: '100%'}} placeholder="Buscar por título..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                    </div>
-                    <button onClick={handleNewAssetGroup} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold shadow-sm whitespace-nowrap">+ Novo Grupo de Ativos</button>
+        <Modal isOpen={isOpen} onClose={onClose} title="Biblioteca Padrão de Manutenção">
+            <div className="flex flex-col h-[70vh]">
+                <div className="flex justify-between items-center mb-4 shrink-0">
+                    <input 
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                        placeholder="Buscar modelo..."
+                        className="p-2 border rounded w-64 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    />
+                    {/* ✅ BOTÃO RESTAURADO: NOVO GRUPO DE ATIVOS */}
+                    <button onClick={handleNew} className="bg-green-600 text-white px-2 py-1.5 rounded flex items-center gap-0.5 font-bold hover:bg-green-700">
+                        <Plus size={18} /> Novo Grupo de Ativos
+                    </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-4 pr-2 pb-2">
-                    {Object.entries(groupedTasks).map(([asset, tasks]) => {
-                        const isExpanded = expandedAssets.has(asset) || (selectedAsset === asset);
-                        return (
-                            <div key={asset} className="border dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-800 shadow-sm transition-all">
-                                <div 
-                                    className="bg-gray-100 dark:bg-gray-700 p-3 flex justify-between items-center cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                                    onClick={() => toggleGroup(asset)}
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-gray-500 text-xs transform transition-transform duration-200" style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                                        <h4 className="font-bold text-gray-800 dark:text-white text-sm">{asset} <span className="font-normal text-gray-500 text-xs ml-1">({tasks.length})</span></h4>
-                                    </div>
-                                    <button 
-                                        onClick={(e) => { 
-                                            e.stopPropagation(); 
-                                            setEditingItem({ asset_category: asset, title: "Nova Tarefa Padrão", subtasks: [] }); 
-                                            setIsEditing(true); 
-                                        }}
-                                        className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded shadow-sm"
-                                    >
-                                        + Tarefa
-                                    </button>
-                                </div>
+                {isEditing ? (
+                    <div className="flex-1 overflow-y-auto p-4 bg-gray-50 dark:bg-gray-900 border dark:border-gray-700 rounded space-y-4">
+                        <h3 className="font-bold text-lg mb-4 text-gray-800 dark:text-white">{editingItem.id ? 'Editar Modelo' : 'Novo Grupo / Tarefa'}</h3>
+                        
+                        <div>
+                            <label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Ativo (Categoria)</label>
+                            <input list="assets-list" value={editingItem.asset_category || ''} onChange={e => setEditingItem({...editingItem, asset_category: e.target.value})} className={inputClass} placeholder="Selecione ou digite um novo ativo..." />
+                            <datalist id="assets-list">{STANDARD_ASSETS.map(a => <option key={a} value={a} />)}</datalist>
+                        </div>
 
-                                {isExpanded && (
-                                    <div className="p-2 space-y-2 bg-gray-50 dark:bg-gray-800/50">
-                                            {tasks.map((task) => (
-                                                <div key={task.id} className="p-3 border dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 hover:border-blue-300 transition-all relative group">
-                                                    <div className="flex justify-between items-start">
-                                                        <div className="flex-1 cursor-pointer" onClick={() => { setEditingItem(task); setIsEditing(true); }}>
-                                                            <div className="font-bold text-sm text-gray-800 dark:text-gray-200 mb-1">{task.title}</div>
-                                                            <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
-                                                                <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">📅 {task.frequency_days} dias</span>
-                                                                <span className={`px-1.5 py-0.5 rounded text-white ${task.criticality === 'Alto' ? 'bg-orange-500' : 'bg-green-500'}`}>{task.criticality}</span>
-                                                                <span className="bg-gray-100 px-1.5 py-0.5 rounded border">⏱ {task.estimated_duration_minutes} min</span>
+                        <div>
+                            <label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Título da Tarefa</label>
+                            <input value={editingItem.title || ''} onChange={e => setEditingItem({...editingItem, title: e.target.value})} className={inputClass} />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Tipo</label>
+                                <select value={editingItem.task_type || 'Preventiva'} onChange={e => setEditingItem({...editingItem, task_type: e.target.value})} className={inputClass}>
+                                    <option>Preventiva</option><option>Corretiva</option><option>Preditiva</option><option>Inspeção</option>
+                                    <option>Limpeza</option><option>Projeto</option><option>Acompanhamento de Serviço</option><option>Coleta de dados</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Freq. (Dias)</label>
+                                <input type="number" value={editingItem.frequency_days} onChange={e => setEditingItem({...editingItem, frequency_days: Number(e.target.value)})} className={inputClass} />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Duração (Min)</label>
+                                <input type="number" value={editingItem.estimated_duration_minutes} onChange={e => setEditingItem({...editingItem, estimated_duration_minutes: Number(e.target.value)})} className={inputClass} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold mb-1 text-red-600 dark:text-red-400">Inatividade (Min)</label>
+                                <input type="number" value={editingItem.planned_downtime_minutes || 0} onChange={e => setEditingItem({...editingItem, planned_downtime_minutes: Number(e.target.value)})} className={inputClass} />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Criticidade</label>
+                                <select value={editingItem.criticality || 'Média'} onChange={e => setEditingItem({...editingItem, criticality: e.target.value})} className={inputClass}>
+                                    <option>Baixa</option><option>Média</option><option>Alta</option><option>Urgente</option>
+                                </select>
+                            </div>
+                            <div><label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Classificação 1</label><input value={editingItem.classification1 || ''} onChange={e => setEditingItem({...editingItem, classification1: e.target.value})} className={inputClass} /></div>
+                        </div>
+
+                        <div><label className="block text-xs font-bold mb-1 text-gray-600 dark:text-gray-400">Classificação 2</label><input value={editingItem.classification2 || ''} onChange={e => setEditingItem({...editingItem, classification2: e.target.value})} className={inputClass} /></div>
+
+                        <div>
+                            <div className="flex justify-between items-end mb-2">
+                                <label className="block text-xs font-bold text-gray-600 dark:text-gray-400">Checklist Modelo</label>
+                                <button onClick={addSubtask} className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded hover:bg-blue-200">+ Item</button>
+                            </div>
+                            <div className="space-y-2 max-h-32 overflow-y-auto">
+                                {editingItem.subtasks?.map((sub, i) => (
+                                    <div key={i} className="flex gap-2">
+                                        <input value={sub} onChange={e => updateSubtask(i, e.target.value)} className={inputClass} />
+                                        <button onClick={() => removeSubtask(i)} className="text-red-500 hover:text-red-700"><Trash2 size={16}/></button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-4">
+                            <button onClick={() => setIsEditing(false)} className="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded text-gray-800 dark:text-white">Cancelar</button>
+                            <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded font-bold flex items-center gap-2"><Save size={16}/> Salvar</button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                        {Object.entries(groupedTasks)
+                            .sort((a, b) => a[0].localeCompare(b[0]))
+                            .map(([asset, tasks]) => {
+                                const isExpanded = expandedAssets.has(asset);
+                                const filteredTasks = tasks.filter(t => t.title.toLowerCase().includes(searchTerm.toLowerCase()));
+                                if (searchTerm && filteredTasks.length === 0) return null;
+
+                                return (
+                                    <div key={asset} className="border dark:border-gray-700 rounded bg-white dark:bg-gray-800 overflow-hidden shadow-sm">
+                                        <div 
+                                            className="flex items-center justify-between p-3 bg-gray-100 dark:bg-gray-700/50 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700"
+                                            onClick={() => toggleAsset(asset)}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                {isExpanded ? <ChevronDown size={18} className="text-gray-500"/> : <ChevronRight size={18} className="text-gray-500"/>}
+                                                <h4 className="font-bold text-gray-800 dark:text-gray-200">{asset}</h4>
+                                                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">{tasks.length}</span>
+                                            </div>
+                                            
+                                            {/* ✅ BOTÃO EXCLUIR ATIVO (ÚNICA ADIÇÃO NO LIST ITEM) */}
+                                            <div className="flex items-center" onClick={e => e.stopPropagation()}>
+                                                <button 
+                                                    onClick={() => handleDeleteAsset(asset)}
+                                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
+                                                    title={`Excluir ativo ${asset} e todas suas tarefas`}
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {isExpanded && (
+                                            <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                                                {filteredTasks.map(task => (
+                                                    <div key={task.id} className="p-3 hover:bg-gray-50 dark:hover:bg-gray-700/30 flex justify-between items-start group">
+                                                        <div className="flex-1">
+                                                            <div className="font-semibold text-gray-800 dark:text-gray-200">{task.title}</div>
+                                                            <div className="text-xs text-gray-500 flex gap-3 mt-1">
+                                                                <span>{task.task_type}</span>
+                                                                <span>{task.frequency_days} dias</span>
+                                                                <span>{task.estimated_duration_minutes} min</span>
+                                                                {task.planned_downtime_minutes ? <span className="text-red-500 font-bold">Inativ: {task.planned_downtime_minutes} min</span> : null}
                                                             </div>
-                                                            <div className="mt-1 text-[10px] text-gray-400 truncate max-w-md">
+                                                            <div className="text-xs text-gray-400 truncate max-w-md">
                                                                 {task.subtasks?.length > 0 ? `📋 ${task.subtasks.length} itens no checklist` : 'Sem checklist'}
                                                             </div>
                                                         </div>
                                                         <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <button onClick={() => {setEditingItem(task); setIsEditing(true);}} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded">✏️</button>
-                                                            <button onClick={() => handleDelete(task.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">🗑️</button>
+                                                            <button onClick={() => {setEditingItem(task); setIsEditing(true);}} className="p-1.5 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded">✏️</button>
+                                                            <button onClick={() => handleDelete(task.id)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded">🗑️</button>
                                                         </div>
                                                     </div>
-                                                </div>
-                                            ))}
-                                            {tasks.length === 0 && <div className="text-center text-xs text-gray-400 p-2 italic">Nenhuma tarefa.</div>}
+                                                ))}
+                                                {filteredTasks.length === 0 && <div className="text-center text-xs text-gray-400 p-2 italic">Nenhuma tarefa encontrada.</div>}
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
+                                );
+                            })}
+                    </div>
+                )}
             </div>
         </Modal>
     );

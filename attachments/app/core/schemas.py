@@ -162,6 +162,7 @@ class TaskTemplateCreate(BaseModel):
     classification1: Optional[str] = None
     classification2: Optional[str] = None
     estimated_duration_minutes: int = 0
+    planned_downtime_minutes: int = 0 # ✅ NOVO CAMPO
     frequency: str = "Dias"
     frequency_days: int
     subtasks: List[str] = []

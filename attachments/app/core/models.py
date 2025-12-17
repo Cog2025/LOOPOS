@@ -39,6 +39,7 @@ class TaskTemplate(Base):
     classification1 = Column(String, nullable=True)
     classification2 = Column(String, nullable=True)
     estimated_duration_minutes = Column(Integer, default=0)
+    planned_downtime_minutes = Column(Integer, default=0) # ✅ NOVO CAMPO
     frequency = Column(String)
     frequency_days = Column(Integer, nullable=True)
     subtasks = Column(JSON, default=list) 
@@ -54,6 +55,7 @@ class PlantMaintenancePlan(Base):
     classification1 = Column(String)
     classification2 = Column(String)
     estimated_duration_minutes = Column(Integer, default=0) 
+    planned_downtime_minutes = Column(Integer, default=0) # ✅ NOVO CAMPO
     frequency_days = Column(Integer)
     subtasks = Column(JSON, default=list)
     active = Column(Boolean, default=True)

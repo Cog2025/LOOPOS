@@ -79,8 +79,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   // ✅ FILTRO DE VISIBILIDADE DO MENU (RBAC)
-  // - Admin/Operador: Veem todos os botões.
-  // - Outros: Veem equipe (Coord, Sup, Tec, Aux) e Clientes, mas NÃO veem Admin/Operador.
   const visibleRoleButtons = allRoleButtons.filter(btn => {
       if (!user) return false;
       
@@ -106,8 +104,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     setMobileOpen(false);
   };
 
-  // Qualquer usuário autenticado (exceto talvez Cliente em alguns casos) pode ver a seção de equipe
-  // A filtragem real dos dados acontece no Modal
   const canViewTeam = user && user.role !== Role.CLIENT;
 
   return (

@@ -1,6 +1,10 @@
 // File: types.ts
 // Este arquivo centraliza todas as definições de tipos e interfaces TypeScript.
 
+
+// ✅ VOLTANDO PARA OS NOMES ORIGINAIS DO SEU SIDEBAR
+export type ViewType = 'KANBAN' | 'CALENDAR' | 'SCHEDULE_52_WEEKS' | 'MAINTENANCE_PLANS';
+
 export enum Role {
   ADMIN = "Admin",
   COORDINATOR = "Coordenador",
@@ -42,7 +46,7 @@ export interface SubPlant {
     id: string; 
     name: string;
     inverterCount: number;
-    inverterStartIndex?: number; // ✅ Novo: Define onde começa a contagem (ex: 5 para INV2.5)
+    inverterStartIndex?: number;
     trackersPerInverter: number;
     stringsPerInverter: number;
 }
@@ -51,11 +55,11 @@ export interface Plant {
     id: string;
     client: string;
     name: string;
-    assets: string[];
-    subPlants: SubPlant[]; 
     stringCount: number;
     trackerCount: number;
-    coordinatorId?: string | null;
+    subPlants: SubPlant[];
+    assets: string[];
+    coordinatorId?: string;
     supervisorIds?: string[];
     technicianIds?: string[];
     assistantIds?: string[];
@@ -72,9 +76,9 @@ export interface ImageAttachment {
     id: string;
     url: string;
     caption?: string;
-    uploadedBy?: string;
-    uploadedAt: string;
     fileName?: string;
+    uploadedBy?: string;
+    uploadedAt?: string;
 }
 
 export interface SubtaskItem {
@@ -101,15 +105,16 @@ export interface OS {
     status: OSStatus;
     priority: Priority;
     plantId: string;
-    subPlantId?: string;
-    inverterId?: string;
-    technicianId: string;
-    supervisorId: string;
+    technicianId?: string;
+    supervisorId?: string;
     assistantId?: string;
     startDate: string;
     endDate?: string;
-    createdAt: string;
+    
+    // Campos necessários
+    createdAt: string; 
     updatedAt: string;
+    
     activity: string;
     assets: string[];
     logs: OSLog[];
@@ -122,6 +127,8 @@ export interface OS {
     isInReview?: boolean;
     subtasksStatus?: SubtaskItem[]; 
     maintenancePlanId?: string;
+    subPlantId?: string;
+    inverterId?: string;
     classification1?: string;
     classification2?: string;
     plannedDowntime?: number;
@@ -146,6 +153,7 @@ export interface TaskTemplate {
     classification1?: string;
     classification2?: string;
     estimated_duration_minutes: number;
+    planned_downtime_minutes?: number; // Campo novo mantido
     frequency: string;
     frequency_days: number;
     subtasks: string[];
@@ -160,10 +168,9 @@ export interface PlantMaintenancePlan {
     criticality: string;
     classification1?: string;
     classification2?: string;
-    estimated_duration_minutes?: number; 
+    estimated_duration_minutes: number;
+    planned_downtime_minutes?: number; // Campo novo mantido
     frequency_days: number;
     subtasks: string[];
     active: boolean;
 }
-
-export type ViewType = 'KANBAN' | 'CALENDAR' | 'SCHEDULE_52_WEEKS' | 'MAINTENANCE_PLANS';
