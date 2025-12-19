@@ -1,3 +1,5 @@
+// File: /LOOPOS/tailwind.config.js
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -8,7 +10,12 @@ export default {
     "./*.{js,ts,jsx,tsx}"
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        // Criamos uma classe chamada 'nunito'
+        nunito: ['"Nunito Sans"', 'system-ui', 'sans-serif'],
+      },
+    },
   },
   plugins: [],
   darkMode: 'class', // Habilita modo escuro se seu sistema usar

@@ -9,7 +9,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Role, Priority, OSStatus } from '../../types';
 import { generateOSReport } from '../utils/pdfGenerator';
 import { Download } from 'lucide-react';
-import JSZip from 'jszip'; 
+import JSZip from 'jszip';
+import { saveFile } from '../utils/fileSaver';
 
 interface Props {
   isOpen: boolean;
@@ -106,9 +107,12 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose, initialStatus }) => {
 
       const helpers = { getPlantName, getUserName };
 
+      // 1. Gera cada PDF e adiciona ao arquivo ZIP
       for (const os of filteredData) {
+        // Gera o PDF (passando false para não baixar automaticamente)
         const doc = await generateOSReport([os], `Relatório - ${os.id}`, helpers, false);
         
+        // Cria um nome de arquivo seguro
         const safeId = os.id;
         const safeDate = os.startDate.split('T')[0];
         const safePlant = getPlantName(os.plantId).replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '');
@@ -116,17 +120,17 @@ const DownloadModal: React.FC<Props> = ({ isOpen, onClose, initialStatus }) => {
         
         const fileName = `${safeId}-${safeDate}-${safePlant}-${safeAsset}.pdf`;
         
+        // Adiciona ao zip como Blob (o JSZip lida bem com isso internamente)
         const pdfBlob = doc.output('blob');
         folder?.file(fileName, pdfBlob);
       }
 
-      const content = await zip.generateAsync({ type: "blob" });
-      const url = window.URL.createObjectURL(content);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${folderName}.zip`;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      // 2. 🔥 O PULO DO GATO: Gera o ZIP final como BASE64
+      // O Android precisa de base64 para gravar no disco via plugin
+      const zipBase64 = await zip.generateAsync({ type: "base64" });
+      
+      // 3. Chama o helper universal para salvar
+      await saveFile(`${folderName}.zip`, zipBase64, 'application/zip');
       
       onClose();
     } catch (error) {

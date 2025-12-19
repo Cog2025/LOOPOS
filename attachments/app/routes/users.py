@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core import models
 from app.core.schemas import UserCreate, UserUpdate, UserOut
 
-router = APIRouter(prefix="/api/users", tags=["users"])
+router = APIRouter(tags=["users"])
 
 @router.get("", response_model=List[UserOut])
 def list_users(db: Session = Depends(get_db)):

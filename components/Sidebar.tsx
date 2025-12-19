@@ -129,7 +129,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="h-16 flex items-center justify-between px-4 border-b border-gray-200 dark:border-gray-700">
           {!isCollapsed && (
             <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent truncate">
-              LoopOS
+              loop.OS Manager
             </span>
           )}
           {isCollapsed && (

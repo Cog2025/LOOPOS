@@ -6,7 +6,7 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { OS, User, Plant, Notification, OSLog, ImageAttachment, Role, TaskTemplate, PlantMaintenancePlan } from '../types';
 
-const API_BASE = ''; 
+const API_BASE = 'http://192.168.18.165:8000';
 
 interface AssignmentsDTO {
   coordinatorId: string | null;
@@ -124,6 +124,11 @@ const normalizeOS = (o: any): OS => ({
 });
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // ADICIONE ISTO PARA TESTAR:
+  //React.useEffect(() => {
+  //  alert(`Conectando em: ${API_BASE}`);
+  //}, []);
+  
   // ✅ CORREÇÃO: Notificações agora usam LocalStorage para persistir no F5
   const [notifications, setNotifications] = useLocalStorage<Notification[]>('notifications', []);
   const [users, setUsers] = useLocalStorage<User[]>('users', []);
@@ -139,13 +144,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     headersRef.current = { ...headersRef.current, ...h };
   }, []);
 
+  // Versão Limpa e Estável
   const api = React.useCallback((path: string, init?: RequestInit) => {
-    const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+    // Se o path vier sem barra inicial, adiciona
+    const safePath = path.startsWith('/') ? path : `/${path}`;
+    
+    // Se já tiver http (ex: link de imagem), usa direto. Se não, concatena com API_BASE
+    const url = safePath.startsWith('http') ? safePath : `${API_BASE}${safePath}`;
+
     const defaultHeaders = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         'X-Requested-With': 'XMLHttpRequest'
     };
+    
+    // Removemos a lógica de forçar barra no final, o FastAPI padrão prefere sem.
+    
     const headers = { ...defaultHeaders, ...(init?.headers || {}), ...headersRef.current };
     return fetch(url, { ...init, headers });
   }, []);
@@ -161,13 +175,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // ✅ RELOAD ROBUSTO: Fusão de dados API + LocalStorage
   const reloadFromAPI = React.useCallback(async () => {
-    try {
-        const [u, p, o, n] = await Promise.all([
-            api('/api/users').then(r => r.ok ? r.json() : []),
-            api('/api/plants').then(r => r.ok ? r.json() : []),
-            api('/api/os').then(r => r.ok ? r.json() : []),
-            api('/api/notifications').then(r => r.ok ? r.json() : []),
-        ]);
+  try {
+      const [u, p, o, n] = await Promise.all([
+          api('/api/users').then(r => r.ok ? r.json() : []),   // SEM barra no fim
+          api('/api/plants').then(r => r.ok ? r.json() : []),  // SEM barra no fim
+          api('/api/os').then(r => r.ok ? r.json() : []),      // SEM barra no fim
+          api('/api/notifications').then(r => r.ok ? r.json() : []),
+      ]);
         
         const U = toArray(u);
         const P = toArray(p).map(normalizePlant);

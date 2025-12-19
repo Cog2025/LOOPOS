@@ -4,7 +4,33 @@ import autoTable from 'jspdf-autotable';
 import { format, isValid } from 'date-fns';
 import { OS, PlantMaintenancePlan, TaskTemplate } from '../../types';
 
-// --- HELPERS (Funções auxiliares) ---
+// 🔥 DEFINIÇÃO DO SERVIDOR
+const API_BASE = 'http://192.168.18.165:8000';
+
+// --- HELPERS ---
+
+const resolveAssetUrl = (u?: string) => {
+    if (!u) return '';
+    if (u.startsWith('data:')) return u;
+    
+    // Remove espaços extras que podem quebrar a URL
+    let cleanPath = u.trim();
+
+    // Se já for absoluta (http/https), retorna codificada
+    if (cleanPath.startsWith('http')) {
+        return encodeURI(cleanPath);
+    }
+    
+    // Garante que começa com /
+    if (!cleanPath.startsWith('/')) {
+        cleanPath = `/${cleanPath}`;
+    }
+
+    // Monta a URL e codifica apenas a parte do caminho/arquivo
+    // (Evita codificar os :// do http)
+    const fullUrl = `${API_BASE}${cleanPath}`;
+    return encodeURI(fullUrl);
+};
 
 const getFrequencyLabel = (days: number): string => {
   if (!days) return '-';
@@ -19,7 +45,6 @@ const getFrequencyLabel = (days: number): string => {
   return `${days} Dias`;
 };
 
-// Formata duração em SEGUNDOS (para OSs) -> HH:MM:SS
 const formatDuration = (seconds?: number) => {
   if (!seconds) return '00:00:00';
   const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
@@ -28,7 +53,6 @@ const formatDuration = (seconds?: number) => {
   return `${h}:${m}:${s}`;
 };
 
-// ✅ HELPER CORRIGIDO: Formata duração em MINUTOS (para Planos) -> 1h 30m
 const formatMinutes = (mins?: number) => {
     if (!mins) return '-';
     const h = Math.floor(mins / 60);
@@ -55,6 +79,7 @@ const getImageData = (url: string): Promise<ImageData | null> => {
     const img = new Image();
     img.crossOrigin = 'Anonymous'; 
     img.src = url;
+    
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = img.width;
@@ -67,7 +92,12 @@ const getImageData = (url: string): Promise<ImageData | null> => {
           height: img.height
       });
     };
-    img.onerror = () => resolve(null);
+
+    // 🔥 LOG DE ERRO PARA DEBUG NO CELULAR
+    img.onerror = () => {
+        console.warn(`❌ [PDF] Erro ao baixar imagem: ${url}`);
+        resolve(null);
+    };
   });
 };
 
@@ -76,7 +106,6 @@ interface ReportHelpers {
   getUserName: (id: string) => string;
 }
 
-// Paleta de cores para distinguir ativos
 const ASSET_COLORS = [
     [41, 128, 185],  // Azul
     [39, 174, 96],   // Verde
@@ -88,16 +117,16 @@ const ASSET_COLORS = [
     [22, 160, 133],  // Verde Mar
 ];
 
-// --- 1. RELATÓRIO COMPLETO DE MANUTENÇÃO (PLANOS E BIBLIOTECA) ---
+// --- 1. RELATÓRIO COMPLETO DE MANUTENÇÃO (PLANOS) ---
 export const generateFullMaintenancePDF = (
   items: (PlantMaintenancePlan | TaskTemplate)[], 
   title: string,
-  subTitle: string = ''
-) => {
+  subTitle: string = '',
+  shouldSave: boolean = true 
+): jsPDF => { 
   const doc = new jsPDF({ orientation: 'landscape' });
   const now = format(new Date(), 'dd/MM/yyyy HH:mm');
 
-  // --- CAPA / SUMÁRIO ---
   doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
   doc.text(title, 14, 20);
@@ -111,7 +140,6 @@ export const generateFullMaintenancePDF = (
   doc.setDrawColor(200);
   doc.line(14, 38, 280, 38);
 
-  // Agrupar itens por Ativo (Categoria)
   const groupedItems: Record<string, typeof items> = {};
   items.forEach(item => {
       const asset = item.asset_category || 'Geral';
@@ -119,10 +147,8 @@ export const generateFullMaintenancePDF = (
       groupedItems[asset].push(item);
   });
 
-  // Ordenar nomes dos ativos
   const sortedAssets = Object.keys(groupedItems).sort();
 
-  // Gerar Sumário
   doc.setFontSize(16);
   doc.setTextColor(0);
   doc.text("Sumário do Plano", 14, 50);
@@ -131,7 +157,7 @@ export const generateFullMaintenancePDF = (
   doc.setFontSize(10);
   
   sortedAssets.forEach((asset, index) => {
-      if (yPos > 190) { // Nova página se encher
+      if (yPos > 190) {
           doc.addPage();
           yPos = 20;
       }
@@ -139,7 +165,6 @@ export const generateFullMaintenancePDF = (
       doc.text(`${index + 1}. ${asset} (${groupedItems[asset].length} tarefas)`, 14, yPos);
       yPos += 6;
       
-      // Listar tarefas do ativo no sumário
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(80);
       groupedItems[asset].forEach(task => {
@@ -148,23 +173,19 @@ export const generateFullMaintenancePDF = (
           doc.text(`- ${cleanTitle}`, 20, yPos);
           yPos += 5;
       });
-      yPos += 4; // Espaço entre ativos
+      yPos += 4; 
       doc.setTextColor(0);
   });
 
-  // --- TABELAS POR ATIVO ---
-  // Inicia nova página após o sumário
   doc.addPage();
   
   sortedAssets.forEach((asset, index) => {
       const tasks = groupedItems[asset];
       const color = ASSET_COLORS[index % ASSET_COLORS.length] as [number, number, number];
 
-      // Título do Ativo antes da tabela
       const finalY = (doc as any).lastAutoTable?.finalY || 15;
       let titleY = finalY + 15;
       
-      // Se não houver espaço para título + cabeçalho, pula página
       if (titleY > 180) {
           doc.addPage();
           titleY = 20;
@@ -175,7 +196,6 @@ export const generateFullMaintenancePDF = (
       doc.setTextColor(color[0], color[1], color[2]);
       doc.text(`${asset.toUpperCase()}`, 14, titleY);
 
-      // Prepara linhas
       const tableBody = tasks.map(item => {
         const subtasksText = item.subtasks && item.subtasks.length > 0
           ? item.subtasks.map((s, i) => `${i + 1}) ${s}`).join('\n')
@@ -187,15 +207,15 @@ export const generateFullMaintenancePDF = (
           : '-';
 
         return [
-          item.title,                            // 0. Tarefa
-          subtasksText,                          // 1. Checklist
-          item.task_type || '-',                 // 2. Tipo
-          getFrequencyLabel(item.frequency_days),// 3. Frequência
-          duration,                              // 4. Duração
-          downtime,                              // 5. Inatividade
-          item.criticality || '-',               // 6. Criticidade
-          item.classification1 || '-',           // 7. Class 1
-          item.classification2 || '-'            // 8. Class 2
+          item.title,
+          subtasksText,
+          item.task_type || '-',
+          getFrequencyLabel(item.frequency_days),
+          duration,
+          downtime,
+          item.criticality || '-',
+          item.classification1 || '-',
+          item.classification2 || '-'
         ];
       });
 
@@ -220,24 +240,24 @@ export const generateFullMaintenancePDF = (
           overflow: 'linebreak'  
         },
         headStyles: {
-          fillColor: color, // Cor específica do Ativo
+          fillColor: color,
           textColor: 255,
           fontStyle: 'bold',
           halign: 'center'
         },
         columnStyles: {
-          0: { cellWidth: 40, fontStyle: 'bold' }, // Tarefa
-          1: { cellWidth: 80 },                    // Checklist
-          2: { cellWidth: 25 },                    // Tipo
-          3: { cellWidth: 20, halign: 'center' },  // Freq
-          4: { cellWidth: 15, halign: 'center' },  // Dur
-          5: { cellWidth: 15, halign: 'center' },  // Inativ
-          6: { cellWidth: 20, halign: 'center' },  // Critic
-          7: { cellWidth: 25 },                    // Class 1
-          8: { cellWidth: 25 }                     // Class 2
+          0: { cellWidth: 40, fontStyle: 'bold' },
+          1: { cellWidth: 80 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 20, halign: 'center' },
+          4: { cellWidth: 15, halign: 'center' },
+          5: { cellWidth: 15, halign: 'center' },
+          6: { cellWidth: 20, halign: 'center' },
+          7: { cellWidth: 25 },
+          8: { cellWidth: 25 }
         },
         didParseCell: (data) => {
-            if (data.section === 'body' && data.column.index === 6) { // Criticidade
+            if (data.section === 'body' && data.column.index === 6) { 
                 const val = String(data.cell.raw).toLowerCase();
                 if (val.includes('alta') || val.includes('urgente')) {
                     data.cell.styles.textColor = [220, 53, 69];
@@ -248,7 +268,6 @@ export const generateFullMaintenancePDF = (
       });
   });
 
-  // Paginação
   const pageCount = doc.getNumberOfPages();
   for(let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
@@ -258,23 +277,26 @@ export const generateFullMaintenancePDF = (
   }
 
   const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-  doc.save(`${safeTitle}.pdf`);
+  
+  if (shouldSave) {
+    doc.save(`${safeTitle}.pdf`);
+  }
+  
+  return doc; 
 };
 
-// --- 2. RELATÓRIO DE ORDEM DE SERVIÇO (DETALHADO) ---
+// --- 2. RELATÓRIO DE ORDEM DE SERVIÇO (DETALHADO E COMPLETOS) ---
 export const generateOSReport = async (
     osList: OS[], 
     title: string, 
     helpers: ReportHelpers, 
-    shouldSave: boolean = true
-): Promise<jsPDF> => {
+    shouldSave: boolean = true 
+): Promise<jsPDF> => { 
   
   const doc = new jsPDF();
   let yPos = 15;
 
-  // Função interna para desenhar UMA OS
   const printSingleOS = async (os: OS) => {
-      // Cabeçalho da Página
       doc.setFontSize(16); 
       doc.setTextColor(0);
       doc.text(title, 14, 15);
@@ -283,7 +305,7 @@ export const generateOSReport = async (
       doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, 21);
       yPos = 30;
 
-      // Barra de Título da OS
+      // Barra de Título
       doc.setFillColor(41, 128, 185);
       doc.rect(14, yPos, 182, 8, 'F');
       doc.setTextColor(255, 255, 255);
@@ -350,6 +372,7 @@ export const generateOSReport = async (
             yPos += (splitComment.length * 4) + 2;
           }
 
+          // Busca imagens deste item
           const itemImages = os.imageAttachments?.filter(img => 
               img.caption && img.caption.includes(`Item ${index + 1}`)
           ) || [];
@@ -364,7 +387,12 @@ export const generateOSReport = async (
 
             for (const img of itemImages) {
               if (img.url) {
-                const imgData = await getImageData(img.url);
+                // 🔥 LOG DE DEBUG PARA URL DA IMAGEM
+                const fullUrl = resolveAssetUrl(img.url);
+                console.log(`📷 Tentando baixar: ${fullUrl}`);
+
+                const imgData = await getImageData(fullUrl);
+                
                 if (imgData) {
                   if (xImg + maxImgWidth > 200) { xImg = 14; yPos += maxRowHeight + 10; maxRowHeight = 0; }
                   if (yPos + maxImgHeight + 10 > 280) { doc.addPage(); yPos = 20; xImg = 14; maxRowHeight = 0; }
@@ -405,7 +433,11 @@ export const generateOSReport = async (
         const maxImgWidth = 85; const maxImgHeight = 65; const gap = 10; let xImg = 14; let maxRowHeight = 0;
         for (const img of generalImages) {
           if (img.url) {
-            const imgData = await getImageData(img.url);
+            const fullUrl = resolveAssetUrl(img.url);
+            console.log(`📷 Tentando baixar Geral: ${fullUrl}`); // Log
+
+            const imgData = await getImageData(fullUrl);
+            
             if (imgData) {
                if (xImg + maxImgWidth > 200) { xImg = 14; yPos += maxRowHeight + 10; maxRowHeight = 0; }
                if (yPos + maxImgHeight + 10 > 280) { doc.addPage(); yPos = 20; xImg = 14; maxRowHeight = 0; }
@@ -431,13 +463,11 @@ export const generateOSReport = async (
       }
   };
 
-  // Itera sobre a lista de OSs e imprime cada uma
   for (let i = 0; i < osList.length; i++) {
       if (i > 0) doc.addPage();
       await printSingleOS(osList[i]);
   }
 
-  // Paginação Final
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
@@ -450,5 +480,5 @@ export const generateOSReport = async (
     doc.save(`${title.replace(/\s/g, '_')}.pdf`);
   }
   
-  return doc;
+  return doc; 
 };

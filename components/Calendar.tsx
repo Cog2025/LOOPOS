@@ -12,6 +12,8 @@ import { ChevronLeft, ChevronRight, Download, FileText, Filter } from 'lucide-re
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateOSReport } from './utils/pdfGenerator';
+import { saveFile } from './utils/fileSaver';
+import { Capacitor } from '@capacitor/core';
 
 interface CalendarProps {
   osList: OS[];
@@ -183,11 +185,18 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     if (type === 'complete') {
         setIsGeneratingPDF(true);
         try {
-            await generateOSReport(
+            // Gera o PDF (false = não baixa automático)
+            const doc = await generateOSReport(
                 reportData, 
                 "Relatório Completo de Manutenção",
-                { getPlantName, getUserName } as any // Type assertion para evitar erro de tipagem estrita
+                { getPlantName, getUserName } as any,
+                false 
             );
+            
+            // Salva via Filesystem
+            const pdfBase64 = doc.output('datauristring').split(',')[1];
+            await saveFile(`Relatorio_Completo_${reportStartDate}.pdf`, pdfBase64, 'application/pdf');
+
         } catch (e) {
             console.error(e);
             alert("Erro ao gerar PDF.");
@@ -196,47 +205,56 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
         }
     } else {
         // --- RELATÓRIO RESUMIDO ---
-        const doc = new jsPDF();
-        doc.setFontSize(16);
-        doc.text("Relatório Resumido de Manutenção", 14, 15);
-        doc.setFontSize(10);
-        const periodo = `Período: ${format(parseISO(reportStartDate), 'dd/MM/yyyy')} a ${format(parseISO(reportEndDate), 'dd/MM/yyyy')}`;
-        doc.text(periodo, 14, 22);
-        doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, 27);
+        try {
+            const doc = new jsPDF();
+            // ... (código de geração do PDF resumido continua igual) ...
+            doc.setFontSize(16);
+            doc.text("Relatório Resumido de Manutenção", 14, 15);
+            doc.setFontSize(10);
+            const periodo = `Período: ${format(parseISO(reportStartDate), 'dd/MM/yyyy')} a ${format(parseISO(reportEndDate), 'dd/MM/yyyy')}`;
+            doc.text(periodo, 14, 22);
+            doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, 27);
 
-        const head = [['Data', 'OS ID', 'Usina', 'Ativo', 'Tarefa', 'Técnico', 'Status']];
-        const body = reportData.map(os => {
-            const assetName = (os as any).assetName || (os.assets && os.assets.length > 0 ? os.assets.join(', ') : 'Geral');
-            return [
-                format(new Date(os.startDate), 'dd/MM/yyyy'),
-                os.id,
-                getPlantName(os.plantId),
-                assetName,
-                os.activity,
-                getUserName(os.technicianId || ''),
-                os.status
-            ];
-        });
+            const head = [['Data', 'OS ID', 'Usina', 'Ativo', 'Tarefa', 'Técnico', 'Status']];
+            const body = reportData.map(os => {
+                const assetName = (os as any).assetName || (os.assets && os.assets.length > 0 ? os.assets.join(', ') : 'Geral');
+                return [
+                    format(new Date(os.startDate), 'dd/MM/yyyy'),
+                    os.id,
+                    getPlantName(os.plantId),
+                    assetName,
+                    os.activity,
+                    getUserName(os.technicianId || ''),
+                    os.status
+                ];
+            });
 
-        autoTable(doc, {
-            startY: 35,
-            head: head,
-            body: body,
-            theme: 'striped',
-            headStyles: { fillColor: [41, 128, 185] },
-            styles: { fontSize: 8 },
-            columnStyles: {
-                0: { cellWidth: 20 },
-                1: { cellWidth: 18 },
-                2: { cellWidth: 25 },
-                3: { cellWidth: 30 },
-                4: { cellWidth: 'auto' },
-                5: { cellWidth: 25 },
-                6: { cellWidth: 20 }
-            }
-        });
-        
-        doc.save(`Resumo_${reportStartDate}.pdf`);
+            autoTable(doc, {
+                startY: 35,
+                head: head,
+                body: body,
+                theme: 'striped',
+                headStyles: { fillColor: [41, 128, 185] },
+                styles: { fontSize: 8 },
+                columnStyles: {
+                    0: { cellWidth: 20 },
+                    1: { cellWidth: 18 },
+                    2: { cellWidth: 25 },
+                    3: { cellWidth: 30 },
+                    4: { cellWidth: 'auto' },
+                    5: { cellWidth: 25 },
+                    6: { cellWidth: 20 }
+                }
+            });
+            
+            // Salva via Filesystem
+            const pdfBase64 = doc.output('datauristring').split(',')[1];
+            await saveFile(`Resumo_${reportStartDate}.pdf`, pdfBase64, 'application/pdf');
+
+        } catch (e) {
+            console.error(e);
+            alert("Erro ao gerar resumo.");
+        }
     }
   };
 

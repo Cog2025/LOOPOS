@@ -7,9 +7,10 @@ import Modal from './modals/Modal';
 import StandardLibraryModal from './modals/StandardLibraryModal';
 import CustomInitializationModal from './modals/CustomInitializationModal';
 import { generateFullMaintenancePDF } from './utils/pdfGenerator';
+import { saveFile } from './utils/fileSaver';
 import { 
     Download, ChevronDown, ChevronRight, AlertCircle, BookOpen, 
-    Settings, Plus, Trash2, Edit, Save, X, FileText 
+    Settings, Plus, Trash2, Edit, Save, X 
 } from 'lucide-react';
 
 const MaintenancePlans: React.FC = () => {
@@ -27,112 +28,217 @@ const MaintenancePlans: React.FC = () => {
   const [showCustomWizard, setShowCustomWizard] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
-  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set()); 
+  // Estado para controlar o disparo do download após atualização
+  const [pendingLibraryDownload, setPendingLibraryDownload] = useState(false);
+  
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [expandedAssets, setExpandedAssets] = useState<Set<string>>(new Set());
+
   const [isAddingAsset, setIsAddingAsset] = useState(false);
   const [newAssetName, setNewAssetName] = useState('');
 
-  // --- PERMISSÕES ---
-  const currentPlant = plants.find(p => p.id === selectedPlantId);
-  const canManageLibrary = user?.role === Role.ADMIN;
-  const canDownloadLibrary = user && [Role.ADMIN, Role.OPERATOR, Role.COORDINATOR].includes(user.role);
-  
-  const canImplementPlan = useMemo(() => {
-    if (!user || !selectedPlantId || !currentPlant) return false;
-    if (user.role === Role.ADMIN) return true;
-    if (user.role === Role.COORDINATOR && currentPlant.coordinatorId === user.id) return true;
-    return false;
-  }, [user, selectedPlantId, currentPlant]);
-
-  // Permite editar se for Admin OU se for o Coordenador responsável por esta usina
-  const canEditImplemented = user?.role === Role.ADMIN || (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
-
-  // --- FILTROS ---
+  // Carrega lista de clientes
   const availableClients = useMemo(() => {
-    const allClients = Array.from(new Set(plants.map(p => p.client).filter(Boolean))) as string[];
-    if (user?.role === Role.CLIENT) {
-        return allClients.filter(c => plants.some(p => p.client === c && (user.plantIds?.includes(p.id) || p.client === user.name)));
-    }
-    return allClients.sort();
-  }, [plants, user]);
+      const clients = new Set<string>();
+      plants.forEach(p => { if(p.client) clients.add(p.client); });
+      return Array.from(clients).sort();
+  }, [plants]);
 
   const availablePlants = useMemo(() => {
-    return plants.filter(p => {
-        if (!selectedClient) return false;
-        if (p.client !== selectedClient) return false;
-        if (user?.role === Role.ADMIN || user?.role === Role.OPERATOR) return true;
-        return user?.plantIds?.includes(p.id);
-    }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [plants, selectedClient, user]);
+      if (!selectedClient) return [];
+      return plants.filter(p => p.client === selectedClient);
+  }, [selectedClient, plants]);
 
-  useEffect(() => {
-    if (selectedPlantId) {
-        setIsLoading(true);
-        fetchPlantPlan(selectedPlantId).finally(() => setIsLoading(false));
-    }
-  }, [selectedPlantId]);
-
+  const currentPlant = plants.find(p => p.id === selectedPlantId);
   const planData = maintenancePlans[selectedPlantId] || [];
 
   const tasksByAsset = useMemo(() => {
-    const groups: Record<string, PlantMaintenancePlan[]> = {};
-    planData.forEach(task => {
-        const asset = task.asset_category || 'Geral';
-        if (!groups[asset]) groups[asset] = [];
-        groups[asset].push(task);
-    });
-    return groups;
+      const groups: Record<string, PlantMaintenancePlan[]> = {};
+      planData.forEach(task => {
+          const asset = task.asset_category || 'Geral';
+          if (!groups[asset]) groups[asset] = [];
+          groups[asset].push(task);
+      });
+      return groups;
   }, [planData]);
 
-  const toggleTask = (id: string) => setExpandedTasks(p => { const n = new Set(p); if(n.has(id)) n.delete(id); else n.add(id); return n; });
-  const toggleAsset = (asset: string) => setExpandedAssets(p => { const n = new Set(p); if(n.has(asset)) n.delete(asset); else n.add(asset); return n; });
+  const canDownloadLibrary = user?.role !== Role.CLIENT;
+  const canManageLibrary = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
+  const canImplementPlan = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || user?.role === Role.COORDINATOR;
+  const canEditImplemented = user?.role === Role.ADMIN || user?.role === Role.OPERATOR || (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
 
-  const handleDownloadPlantPDF = () => {
+  useEffect(() => {
+      if (selectedPlantId) {
+          fetchPlantPlan(selectedPlantId);
+      }
+  }, [selectedPlantId]);
+
+  // EFEITO: Monitora se há um download pendente e se os dados chegaram
+  useEffect(() => {
+      if (pendingLibraryDownload && !isLoading && taskTemplates.length > 0) {
+          executeLibraryDownload();
+          setPendingLibraryDownload(false);
+      }
+  }, [taskTemplates, pendingLibraryDownload, isLoading]);
+
+  const toggleTask = (id: string) => {
+      const newSet = new Set(expandedTasks);
+      if (newSet.has(id)) newSet.delete(id); else newSet.add(id);
+      setExpandedTasks(newSet);
+  };
+
+  const toggleAsset = (asset: string) => {
+      const newSet = new Set(expandedAssets);
+      if (newSet.has(asset)) newSet.delete(asset); else newSet.add(asset);
+      setExpandedAssets(newSet);
+  };
+
+  // --- AÇÕES ---
+
+  const handleDownloadPlantPDF = async () => {
     if (!selectedPlantId || !currentPlant) return;
     if (planData.length === 0) { alert("O plano está vazio."); return; }
-    generateFullMaintenancePDF(planData, `Plano de Manutenção: ${currentPlant.name}`, `Cliente: ${currentPlant.client}`);
+    
+    try {
+        const doc = generateFullMaintenancePDF(
+            planData, 
+            `Plano de Manutenção: ${currentPlant.name}`, 
+            `Cliente: ${currentPlant.client}`, 
+            false 
+        );
+        const pdfBase64 = doc.output('datauristring').split(',')[1];
+        await saveFile(`Plano_${currentPlant.name}.pdf`, pdfBase64, 'application/pdf');
+    } catch (e) {
+        console.error(e);
+        alert("Erro ao baixar plano.");
+    }
   };
 
+  // 1. Inicia o processo de download (Atualiza dados primeiro)
   const handleDownloadLibraryPDF = async () => {
     if (!canDownloadLibrary) return;
-    try {
-        setIsLoading(true);
-        await fetchTaskTemplates();
-        if (!taskTemplates || taskTemplates.length === 0) { alert("Biblioteca vazia."); return; }
-        generateFullMaintenancePDF(taskTemplates, "Biblioteca Padrão de Manutenção (LoopOS)", "Todas as tarefas modelo");
-    } catch(e) { console.error(e); alert("Erro ao baixar."); } finally { setIsLoading(false); }
+    setIsLoading(true);
+    await fetchTaskTemplates();
+    setIsLoading(false);
+    setPendingLibraryDownload(true); 
   };
 
-  const handleSaveTask = async () => { if (editingTask?.id) { await updatePlantTask(editingTask.id, editingTask); setEditingTask(null); fetchPlantPlan(selectedPlantId); } };
-  const handleDeleteTask = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); if (confirm("ATENÇÃO: Deseja realmente excluir esta tarefa?")) { await deletePlantTask(id); fetchPlantPlan(selectedPlantId); } };
-  const handleEditClick = (e: React.MouseEvent, task: PlantMaintenancePlan) => { e.stopPropagation(); setEditingTask(task); };
-  
-  const handleAddAsset = async () => {
-      if (!newAssetName || !selectedPlantId) return;
-      await createPlantTask(selectedPlantId, { plantId: selectedPlantId, asset_category: newAssetName, title: 'Nova Tarefa', task_type: 'Preventiva', criticality: 'Média', frequency_days: 30, subtasks: [], active: true });
-      setNewAssetName(''); setIsAddingAsset(false); fetchPlantPlan(selectedPlantId);
+  // 2. Executa o download real (Chamado pelo useEffect)
+  const executeLibraryDownload = async () => {
+    try {
+        const doc = generateFullMaintenancePDF(
+            taskTemplates, 
+            "Biblioteca Padrão de Manutenção (LoopOS)", 
+            "Todas as tarefas modelo",
+            false
+        );
+        const pdfBase64 = doc.output('datauristring').split(',')[1];
+        await saveFile(`Biblioteca_LoopOS.pdf`, pdfBase64, 'application/pdf');
+    } catch(e) { 
+        console.error(e); 
+        alert("Erro ao gerar PDF da biblioteca."); 
+    }
   };
-  // Função para renomear o ativo (categoria) e atualizar todas as tarefas associadas
-  const handleRenameAsset = async (oldName: string) => {
-      if (!canEditImplemented) return;
-      const newName = prompt("Novo nome para o ativo:", oldName);
-      if (newName && newName !== oldName) {
-          const tasksToUpdate = planData.filter(t => t.asset_category === oldName);
-          // Atualiza todas as tarefas que pertencem a este ativo
-          await Promise.all(tasksToUpdate.map(t => updatePlantTask(t.id, { ...t, asset_category: newName })));
+
+  const handleEditClick = (e: React.MouseEvent, task: PlantMaintenancePlan) => {
+      e.stopPropagation();
+      setEditingTask({ ...task });
+  };
+
+  const handleDeleteTask = async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      if (confirm("Excluir esta tarefa do plano?")) {
+          await deletePlantTask(id);
           fetchPlantPlan(selectedPlantId);
       }
   };
-  
-  const handleAddTaskToAsset = async (assetName: string) => {
-      await createPlantTask(selectedPlantId, { plantId: selectedPlantId, asset_category: assetName, title: 'Nova Tarefa', task_type: 'Preventiva', criticality: 'Média', frequency_days: 30, subtasks: [], active: true });
+
+  const handleSaveTask = async () => {
+      if (!editingTask || !editingTask.id) return;
+      await updatePlantTask(editingTask.id, editingTask);
+      setEditingTask(null);
       fetchPlantPlan(selectedPlantId);
   };
 
-  // Helpers de Subtarefas (Edição estruturada)
-  const addSubtask = () => setEditingTask(p => p ? ({...p, subtasks: [...(p.subtasks||[]), '']}) : null);
-  const updateSubtask = (i: number, v: string) => setEditingTask(p => { if(!p) return null; const s=[...(p.subtasks||[])]; s[i]=v; return {...p, subtasks:s}; });
-  const removeSubtask = (i: number) => setEditingTask(p => { if(!p) return null; const s=[...(p.subtasks||[])]; s.splice(i,1); return {...p, subtasks:s}; });
+  const addSubtask = () => {
+      if (!editingTask) return;
+      setEditingTask({ ...editingTask, subtasks: [...(editingTask.subtasks || []), "Nova verificação"] });
+  };
+
+  const updateSubtask = (idx: number, val: string) => {
+      if (!editingTask || !editingTask.subtasks) return;
+      const newSubs = [...editingTask.subtasks];
+      newSubs[idx] = val;
+      setEditingTask({ ...editingTask, subtasks: newSubs });
+  };
+
+  const removeSubtask = (idx: number) => {
+      if (!editingTask || !editingTask.subtasks) return;
+      const newSubs = editingTask.subtasks.filter((_, i) => i !== idx);
+      setEditingTask({ ...editingTask, subtasks: newSubs });
+  };
+
+  const handleAddAsset = async () => {
+      if (!newAssetName.trim()) return;
+      const placeholderTask = {
+          title: "Nova Tarefa",
+          asset_category: newAssetName,
+          task_type: "Preventiva",
+          criticality: "Média",
+          frequency_days: 30,
+          estimated_duration_minutes: 30
+      };
+      await createPlantTask(selectedPlantId, placeholderTask);
+      setNewAssetName('');
+      setIsAddingAsset(false);
+      fetchPlantPlan(selectedPlantId);
+  };
+
+  const handleAddTaskToAsset = async (asset: string) => {
+      const newTask = {
+          title: "Nova Tarefa",
+          asset_category: asset,
+          task_type: "Preventiva",
+          criticality: "Média",
+          frequency_days: 30,
+          estimated_duration_minutes: 30,
+          subtasks: []
+      };
+      await createPlantTask(selectedPlantId, newTask);
+      fetchPlantPlan(selectedPlantId);
+      if (!expandedAssets.has(asset)) toggleAsset(asset);
+  };
+
+  const handleRenameAsset = async (oldName: string) => {
+      const newName = prompt("Novo nome para o ativo:", oldName);
+      if (newName && newName !== oldName) {
+          const tasks = tasksByAsset[oldName];
+          setIsLoading(true);
+          for (const t of tasks) {
+              await updatePlantTask(t.id, { asset_category: newName });
+          }
+          await fetchPlantPlan(selectedPlantId);
+          setIsLoading(false);
+      }
+  };
+
+  const handleDeleteAsset = async (assetName: string) => {
+      if (confirm(`ATENÇÃO: Deseja excluir o ativo "${assetName}" e TODAS as suas tarefas?\nEsta ação não pode ser desfeita.`)) {
+          const tasks = tasksByAsset[assetName];
+          setIsLoading(true);
+          try {
+              for (const t of tasks) {
+                  await deletePlantTask(t.id);
+              }
+              await fetchPlantPlan(selectedPlantId);
+          } catch (error) {
+              console.error(error);
+              alert("Erro ao excluir algumas tarefas.");
+          } finally {
+              setIsLoading(false);
+          }
+      }
+  };
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900 p-6 overflow-hidden">
@@ -151,28 +257,25 @@ const MaintenancePlans: React.FC = () => {
                 <div className="relative"><select value={selectedPlantId} onChange={e => setSelectedPlantId(e.target.value)} disabled={!selectedClient} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none disabled:opacity-50"><option value="">Selecione...</option>{availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
             </div>
         </div>
-        <div className="flex gap-2 w-full md:w-auto">
-            {/* Botão sempre visível (apenas desabilitado se não tiver dados) */}
-            <button onClick={handleDownloadPlantPDF} disabled={!selectedPlantId || planData.length === 0} className="flex-1 md:flex-none px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2"><Download size={18} /> Plano da Usina</button>
-            
-            {/* Botão visível apenas para quem pode baixar a biblioteca */}
+        
+        {/* BOTÕES DE AÇÃO */}
+        <div className="grid grid-cols-2 md:flex gap-2 w-full md:w-auto mt-4 md:mt-0">
+            <button onClick={handleDownloadPlantPDF} disabled={!selectedPlantId || planData.length === 0} className="col-span-1 px-3 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
+                <Download size={18} /> <span>Plano da Usina</span>
+            </button>
             {canDownloadLibrary && (
-                <button onClick={handleDownloadLibraryPDF} disabled={isLoading} className="flex-1 md:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2 disabled:opacity-50">
-                    {isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <Download size={18} />} Plano Padrão LOOP
+                <button onClick={handleDownloadLibraryPDF} disabled={isLoading} className="col-span-1 px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full disabled:opacity-50">
+                    {isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <Download size={18} />} <span>Plano Padrão</span>
                 </button>
             )}
-            
-            {/* ✅ OCULTA o botão "Editar" se não tiver permissão (canManageLibrary) */}
             {canManageLibrary && (
-                <button onClick={() => setShowLibrary(true)} className="flex-1 md:flex-none px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2">
-                    <BookOpen size={18} /> Editar Plano Padrão LOOP
+                <button onClick={() => setShowLibrary(true)} className="col-span-1 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
+                    <BookOpen size={18} /> <span>Editar Padrão</span>
                 </button>
             )}
-
-            {/* ✅ OCULTA o botão "Inicializar" se não tiver permissão (canImplementPlan) */}
             {canImplementPlan && (
-                <button onClick={() => { if(confirm("Inicializar com Padrão Loop?")) initializePlantPlan(selectedPlantId, 'STANDARD'); }} disabled={!selectedPlantId} className="flex-1 md:flex-none px-4 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex items-center justify-center gap-2">
-                    <Settings size={18} /> Inicializar Plano
+                <button onClick={() => { if(confirm("Inicializar com Padrão Loop?")) initializePlantPlan(selectedPlantId, 'STANDARD'); }} disabled={!selectedPlantId} className="col-span-1 px-3 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
+                    <Settings size={18} /> <span>Inicializar</span>
                 </button>
             )}
         </div>
@@ -188,45 +291,92 @@ const MaintenancePlans: React.FC = () => {
                         ) : (<button onClick={() => setIsAddingAsset(true)} className="flex items-center gap-2 text-sm text-blue-600 hover:bg-blue-50 px-3 py-1 rounded"><Plus size={16} /> Adicionar Ativo</button>)}
                     </div>
                 )}
-                {/* ✅ ORDEM ALFABÉTICA APLICADA AQUI */}
+                
                 {Object.entries(tasksByAsset).sort((a, b) => a[0].localeCompare(b[0])).map(([asset, tasks]) => {
                     const isAssetExpanded = expandedAssets.has(asset);
                     return (
                         <div key={asset} className="mb-4 border dark:border-gray-700 rounded-lg overflow-hidden shadow-sm">
+                            {/* CABEÇALHO DO ATIVO */}
                             <div className="flex items-center justify-between p-3 bg-gray-800 text-white cursor-pointer hover:bg-gray-700" onClick={() => toggleAsset(asset)}>
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-3 flex-1 min-w-0"> {/* 🔥 flex-1 e min-w-0 para encolher texto */}
                                     {isAssetExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                                    <h3 className="font-bold text-sm uppercase tracking-wide">{asset}</h3>
+                                    <h3 className="font-bold text-sm uppercase tracking-wide truncate">{asset}</h3>
                                     
-                                    {/* Botão para editar nome do Ativo */}
                                     {canEditImplemented && (
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); handleRenameAsset(asset); }}
-                                            className="p-1 text-gray-400 hover:text-white transition-colors hover:bg-gray-600 rounded"
+                                            className="p-1 text-gray-400 hover:text-white transition-colors hover:bg-gray-600 rounded shrink-0"
                                             title="Renomear Ativo"
                                         >
                                             <Edit size={14} />
                                         </button>
                                     )}
 
-                                    <span className="text-xs bg-gray-600 px-2 py-0.5 rounded-full font-medium">
-                                        {tasks.length} tarefas
+                                    <span className="text-xs bg-gray-600 px-2 py-0.5 rounded-full font-medium shrink-0">
+                                        {tasks.length}
                                     </span>
                                 </div>
-                                {canEditImplemented && <button onClick={(e) => { e.stopPropagation(); handleAddTaskToAsset(asset); }} className="p-1 hover:bg-gray-600 rounded text-white"><Plus size={16} /></button>}
+                                {/* BOTÕES DE AÇÃO DO ATIVO - Shrink-0 para não sumir */}
+                                {canEditImplemented && (
+                                    <div className="flex items-center gap-2 ml-2 shrink-0">
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleAddTaskToAsset(asset); }} 
+                                            className="p-1.5 hover:bg-gray-600 rounded text-white"
+                                            title="Adicionar Tarefa"
+                                        >
+                                            <Plus size={18} />
+                                        </button>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} 
+                                            className="p-1.5 hover:bg-red-600 rounded text-red-200 hover:text-white transition-colors"
+                                            title="Excluir Ativo e Tarefas"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             {isAssetExpanded && (
                                 <div className="bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700">
                                     {tasks.map(task => (
                                         <div key={task.id} className="p-4 hover:bg-gray-50 dark:hover:bg-gray-700/30 group">
                                             <div className="flex justify-between items-start">
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2 mb-1"><span className={`w-2 h-2 rounded-full ${task.active ? 'bg-green-500' : 'bg-gray-300'}`} /><h4 className="font-semibold text-gray-800 dark:text-gray-200">{task.title}</h4></div>
-                                                    <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400 mt-1"><span>🔄 {task.frequency_days} dias</span><span>⚠️ {task.criticality}</span><span>⏱️ {task.estimated_duration_minutes} min</span>{task.planned_downtime_minutes ? <span className="text-red-500 font-bold">🚫 Inativ: {task.planned_downtime_minutes} min</span> : null}</div>
+                                                <div className="flex-1 min-w-0 pr-2"> 
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className={`w-2 h-2 rounded-full shrink-0 ${task.active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                                        <h4 className="font-semibold text-gray-800 dark:text-gray-200 truncate">{task.title}</h4>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                                        <span>🔄 {task.frequency_days} dias</span>
+                                                        <span>⚠️ {task.criticality}</span>
+                                                        <span>⏱️ {task.estimated_duration_minutes} min</span>
+                                                        {task.planned_downtime_minutes ? <span className="text-red-500 font-bold">🚫 Inativ: {task.planned_downtime_minutes} min</span> : null}
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    <button onClick={() => toggleTask(task.id)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">{expandedTasks.has(task.id) ? 'Ocultar' : 'Checklist'}</button>
-                                                    {canEditImplemented && <div className="flex gap-1 ml-4 border-l pl-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={(e) => handleEditClick(e, task)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><Edit size={16} /></button><button onClick={(e) => handleDeleteTask(e, task.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><Trash2 size={16} /></button></div>}
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <button onClick={() => toggleTask(task.id)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">
+                                                        {expandedTasks.has(task.id) ? 'Ocultar' : 'Checklist'}
+                                                    </button>
+                                                    
+                                                    {/* 🔥 MUDANÇA AQUI: flex-col para empilhar verticalmente */}
+                                                    {canEditImplemented && (
+                                                        <div className="flex flex-col gap-2 border-l pl-2 shrink-0">
+                                                            <button 
+                                                                onClick={(e) => handleEditClick(e, task)} 
+                                                                className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"
+                                                                title="Editar Tarefa"
+                                                            >
+                                                                <Edit size={18} />
+                                                            </button>
+                                                            <button 
+                                                                onClick={(e) => handleDeleteTask(e, task.id)} 
+                                                                className="p-1.5 text-red-500 hover:bg-red-50 rounded"
+                                                                title="Excluir Tarefa"
+                                                            >
+                                                                <Trash2 size={18} />
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                             {expandedTasks.has(task.id) && (
@@ -265,7 +415,15 @@ const MaintenancePlans: React.FC = () => {
                 </div>
                 <div>
                     <div className="flex justify-between items-end mb-2"><label className="block text-sm font-bold">Checklist</label><button onClick={addSubtask} className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">+ Item</button></div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">{editingTask.subtasks?.map((sub, i) => (<div key={i} className="flex gap-2 items-center"><span className="text-xs text-gray-400 w-4">{i+1}.</span><input value={sub} onChange={e => updateSubtask(i, e.target.value)} className="flex-1 p-1.5 text-sm border rounded dark:bg-gray-700 dark:text-white" /><button onClick={() => removeSubtask(i)} className="text-red-400"><Trash2 size={14}/></button></div>))}</div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {editingTask.subtasks?.map((sub, i) => (
+                            <div key={i} className="flex gap-2 items-center">
+                                <span className="text-xs text-gray-400 w-4">{i+1}.</span>
+                                <input value={sub} onChange={e => updateSubtask(i, e.target.value)} className="flex-1 p-2 text-sm border rounded dark:bg-gray-700 dark:text-white" />
+                                <button onClick={() => removeSubtask(i)} className="p-2 text-red-400 hover:bg-red-50 rounded shrink-0"><Trash2 size={18}/></button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
                 <div className="flex justify-end gap-2 pt-4 border-t dark:border-gray-700"><button onClick={() => setEditingTask(null)} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded">Cancelar</button><button onClick={handleSaveTask} className="px-4 py-2 bg-blue-600 text-white rounded font-bold flex items-center gap-2"><Save size={16}/> Salvar</button></div>
             </div>

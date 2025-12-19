@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core import models
 from app.core.schemas import PlantCreate, PlantUpdate, PlantOut, AssignmentsPayload
 
-router = APIRouter(prefix="/api/plants", tags=["plants"])
+router = APIRouter(tags=["plants"])
 
 def normalize_str(s: str) -> str:
     if not s: return ""

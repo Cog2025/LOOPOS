@@ -1,10 +1,12 @@
 // File: contexts/AuthContext.tsx
-// Este arquivo gerencia o estado de autenticação do usuário em toda a aplicação.
-// Mantém comentários explicativos para facilitar manutenção e futuras integrações.
+// ARQUIVO CORRIGIDO: Adicionado endereço IP fixo para funcionar no Android
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User } from '../types';
 import { useData } from './DataContext';
+
+// 🔥 CONFIGURAÇÃO DO ENDEREÇO DO SERVIDOR (IP DO SEU PC)
+const API_BASE = 'http://192.168.18.165:8000';
 
 interface AuthContextType {
   user: User | null;
@@ -35,44 +37,42 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Recupera o token salvo
     const token = localStorage.getItem('token');
     if (user && token) {
-      // Configura o header para todas as requisições futuras
       setAuthHeaders({ 
         'X-User-Id': user.id, 
         'X-Role': user.role,
-        // Em um sistema JWT real, usaríamos: 'Authorization': `Bearer ${token}`
-        // Mas como seu backend usa headers customizados por enquanto, mantemos o X-User-Id
-        // Se quiser migrar 100%, o backend teria que ler o Bearer token.
       });
       reloadFromAPI();
     }
   }, [user, setAuthHeaders, reloadFromAPI]);
 
   const login = async (username: string, password: string) => {
-    // O FastAPI espera x-www-form-urlencoded para o OAuth2PasswordRequestForm
     const formData = new URLSearchParams();
     formData.append('username', username);
     formData.append('password', password);
 
     try {
-      const res = await fetch('/api/login', {
+      // 🔥 CORREÇÃO AQUI: Usando o endereço completo com IP
+      const res = await fetch(`${API_BASE}/api/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded' 
+        },
         body: formData,
       });
 
       if (!res.ok) {
+        // Se der erro, tenta ler o texto para saber o motivo, mas lança erro genérico
         throw new Error('Usuário ou senha inválidos');
       }
 
       const data = await res.json();
       
-      // Salva o token e o usuário
       localStorage.setItem('token', data.access_token);
       localStorage.setItem('currentUser', JSON.stringify(data.user));
       setUser(data.user);
 
     } catch (error) {
-      console.error(error);
+      console.error("Erro no login:", error);
       throw error;
     }
   };

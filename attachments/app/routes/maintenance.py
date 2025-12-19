@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core import models
 from app.core.schemas import TaskTemplateCreate, TaskTemplateOut
 
-router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
+router = APIRouter(tags=["maintenance"])
 
 # --- HELPER DE SEGURANÇA ---
 def verify_write_permission(user_id: str, db: Session):

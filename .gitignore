@@ -15,25 +15,48 @@ dist
 dist-ssr
 coverage
 
-# --- PYTHON / BACKEND (Fundamental) ---
+# --- MOBILE (ANDROID / CAPACITOR) - NOVO E CRÍTICO ---
+# Ignora a pasta de build do Android (arquivos temporários gigantes)
+android/app/build/
+android/.gradle/
+android/build/
+
+# Ignora configurações locais do SDK (caminho do seu computador)
+local.properties
+
+# Ignora os executáveis finais (APK e AAB) para não pesar o repo
+*.apk
+*.aab
+*.ap_
+android/app/release/
+
+# Cache e arquivos de sistema do Android Studio
+.navigation/
+captures/
+.cxx/
+*.jks
+*.keystore
+
+# Arquivos temporários do Capacitor
+capacitor.config.json.timestamp
+capacitor.config.ts.timestamp
+
+# --- PYTHON / BACKEND ---
 __pycache__/
 *.py[cod]
 *$py.class
-# Ambientes virtuais (se você criar um no futuro)
 venv/
 .venv/
 env/
 .env/
 
-# --- BANCO DE DADOS (Crítico) ---
+# --- BANCO DE DADOS ---
 *.db
 *.sqlite3
-# Arquivos temporários do SQLite (lock)
 *.db-journal
 *.db-wal
 
-# --- ARQUIVOS DE AMBIENTE (Segurança) ---
-# Ignora todos os .env que possam conter senhas
+# --- ARQUIVOS DE AMBIENTE ---
 .env
 .env.local
 .env.development.local
@@ -41,13 +64,13 @@ env/
 .env.production.local
 
 # --- UPLOADS E DADOS ---
-# Ignora as imagens enviadas pelos usuários, mas mantém a pasta
 attachments/images/*
 !attachments/images/.gitkeep
-
-# Ignora a pasta de dados do backend (onde fica o banco), mas mantém a pasta
 attachments/data/*
 !attachments/data/.gitkeep
+
+# --- RELATÓRIOS GERADOS (PDFs locais) ---
+*.pdf
 
 # --- IDE / EDITOR ---
 .vscode/*

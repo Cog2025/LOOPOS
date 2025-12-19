@@ -64,7 +64,7 @@ class OSModel(BaseModel):
     class Config:
         from_attributes = True
 
-router = APIRouter(prefix="/api/os", tags=["os"])
+router = APIRouter(tags=["os"])
 
 # Helper para pegar o diretório correto das imagens
 def get_images_dir(os_id: str):

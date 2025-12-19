@@ -14,11 +14,13 @@ from typing import List
 from pathlib import Path
 import os
 
+
 # Routers
+# Certifique-se que estes arquivos existem nas pastas corretas
 from app.routes.users import router as users_router
 from app.routes.plants import router as plants_router
 from app.routes.maintenance import router as maintenance_router
-# 🔥 CORREÇÃO DO IMPORT: Como você roda de dentro da pasta attachments, o import é direto
+# 🔥 Import direto pois você roda o uvicorn da pasta attachments
 from os_api import router as os_router 
 
 print("🔄 [DEBUG] Imports concluídos. Tentando criar tabelas...")
@@ -31,7 +33,7 @@ except Exception as e:
 
 app = FastAPI(title="LoopOS API", version="1.0.0")
 
-# CORS
+# CORS - Permite conexão de qualquer origem (Mobile, Web, Localhost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,27 +41,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. ROTAS DA API
-app.include_router(os_router)
-app.include_router(users_router)
-app.include_router(plants_router)
-app.include_router(maintenance_router)
-
-# 2. SERVIR IMAGENS (PARA O TUNNEL E MINIATURAS FUNCIONAREM)
-# Caminho absoluto para .../LOOPOS/attachments
-# (Sobe 2 níveis a partir de app/main.py para chegar na raiz de attachments)
-CURRENT_DIR = Path(__file__).resolve().parent.parent 
-ATTACHMENTS_DIR = CURRENT_DIR # .../LOOPOS/attachments
-
-if ATTACHMENTS_DIR.exists():
-    # Monta a rota /attachments para que links como /attachments/images/... funcionem
-    app.mount("/attachments", StaticFiles(directory=ATTACHMENTS_DIR), name="attachments")
-    print(f"📂 [DEBUG] Servindo anexos de: {ATTACHMENTS_DIR}")
-else:
-    print(f"⚠️ [AVISO] Pasta de anexos não encontrada em: {ATTACHMENTS_DIR}")
+# ==============================================================================
+# 1. REGISTRO DE ROTAS DA API (COM PREFIXOS CORRETOS)
+# ==============================================================================
+# Isso conecta o endereço "/api/os" do frontend à lógica do os_router
+app.include_router(os_router, prefix="/api/os", tags=["os"])
+app.include_router(users_router, prefix="/api/users", tags=["users"])
+app.include_router(plants_router, prefix="/api/plants", tags=["plants"])
+app.include_router(maintenance_router, prefix="/api/maintenance", tags=["maintenance"])
 
 # --- ROTAS DE AUTENTICAÇÃO ---
-@app.post("/api/login")
+@app.post("/api/login", tags=["auth"])
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or user.password != form_data.password:
@@ -69,16 +61,13 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return {"access_token": create_access_token({"sub": user.id, "role": user.role}), "token_type": "bearer", "user": user}
 
 # --- ROTAS DE NOTIFICAÇÕES ---
-
-@app.get("/api/notifications", response_model=List[NotificationOut])
+@app.get("/api/notifications", response_model=List[NotificationOut], tags=["notifications"])
 def list_notifications(x_user_id: str = Header(None), db: Session = Depends(get_db)):
     if not x_user_id: return []
-    # Retorna as notificações do usuário, ordenadas das mais recentes para as antigas (opcional, mas recomendado)
     return db.query(models.Notification).filter(models.Notification.userId == x_user_id).all()
 
-@app.post("/api/notifications", status_code=201)
+@app.post("/api/notifications", status_code=201, tags=["notifications"])
 def create_notification(payload: NotificationCreate, db: Session = Depends(get_db)):
-    # Evita duplicidade se o ID já existir
     if db.query(models.Notification).filter(models.Notification.id == payload.id).first():
         return {"msg": "Already exists"}
     
@@ -87,40 +76,52 @@ def create_notification(payload: NotificationCreate, db: Session = Depends(get_d
     db.commit()
     return new_notif
 
-# ✅ NOVA ROTA: CORREÇÃO DO ERRO 405 (Marcar como lida)
-@app.put("/api/notifications/{notification_id}/read")
+@app.put("/api/notifications/{notification_id}/read", tags=["notifications"])
 def mark_notification_read(notification_id: str, db: Session = Depends(get_db)):
     notif = db.query(models.Notification).filter(models.Notification.id == notification_id).first()
-    
     if not notif:
         raise HTTPException(status_code=404, detail="Notification not found")
     
     notif.read = True
     db.commit()
-    
     return {"ok": True}
 
-# 3. SERVIR O SITE REACT (MODO PRODUÇÃO)
-# Caminho absoluto para .../LOOPOS/dist
-# (Sobe 3 níveis a partir de app/main.py para sair de attachments e ir para dist)
-DIST_DIR = CURRENT_DIR.parent / "dist"
+# ==============================================================================
+# 2. SERVIR ARQUIVOS ESTÁTICOS E FRONTEND (MANTENHA NO FINAL)
+# ==============================================================================
 
+# Configuração de Diretórios
+CURRENT_DIR = Path(__file__).resolve().parent.parent # .../LOOPOS/attachments
+DIST_DIR = CURRENT_DIR.parent / "dist" # .../LOOPOS/dist
+
+# A. Servir Imagens (Uploads)
+if CURRENT_DIR.exists():
+    # Monta /attachments para servir as imagens salvas
+    app.mount("/attachments", StaticFiles(directory=CURRENT_DIR), name="attachments")
+    print(f"📂 [DEBUG] Servindo anexos de: {CURRENT_DIR}")
+else:
+    print(f"⚠️ [AVISO] Pasta de anexos não encontrada em: {CURRENT_DIR}")
+
+# B. Servir o React App (Frontend)
 if DIST_DIR.exists():
     print(f"✅ [DEBUG] Servindo Frontend de: {DIST_DIR}")
     app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
     
-    # Rota "Pega-Tudo" para o React
+    # Rota "Pega-Tudo" - Captura qualquer URL não atendida pela API acima
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
-        # Se for requisição de API ou Attachments que não casou antes, deixa passar (404 da API)
+        # Proteção: Se a URL começar com 'api' ou 'attachments' e chegou aqui,
+        # significa que a rota não existe no backend. Retorna 404 JSON, não HTML.
         if full_path.startswith("api") or full_path.startswith("attachments"):
             raise HTTPException(status_code=404, detail="Not Found")
             
         file_path = DIST_DIR / full_path
+        
+        # Se for um arquivo físico (ex: favicon.ico, manifest.json), serve ele
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         
-        # Para SPA (Single Page Application), retorna index.html se não achar o arquivo
+        # Para qualquer outra rota (ex: /dashboard, /login), retorna o index.html do React
         return FileResponse(DIST_DIR / "index.html")
 else:
     print(f"⚠️ [ERRO] Pasta 'dist' não encontrada em {DIST_DIR}. Rode 'npm run build' na raiz.")
