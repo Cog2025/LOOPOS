@@ -8,8 +8,8 @@ const config: CapacitorConfig = {
     androidScheme: 'http',
     cleartext: true,
     allowNavigation: [
-      '192.168.18.165',
-      '192.168.18.165:8000'
+      '192.168.18.191',
+      '192.168.18.191:8000'
     ]
   }
 };

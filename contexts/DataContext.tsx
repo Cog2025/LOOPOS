@@ -6,7 +6,8 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { OS, User, Plant, Notification, OSLog, ImageAttachment, Role, TaskTemplate, PlantMaintenancePlan } from '../types';
 
-const API_BASE = 'http://192.168.18.165:8000';
+import { API_BASE } from '../components/utils/config'
+//const API_BASE = 'http://192.168.18.165:8000';
 
 interface AssignmentsDTO {
   coordinatorId: string | null;
@@ -451,9 +452,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if(res.ok) {
                 const savedOS = await res.json();
                 setOsList(prev => prev.map(os => (os.id === osId ? savedOS : os)));
+            } else {
+                throw new Error("Falha no upload"); // Força erro se o status não for OK
             }
         }
-    } catch (e) { console.error("Erro crítico upload:", e); }
+    } catch (e) { 
+        console.error("Erro crítico upload:", e); 
+        throw e; // ✅ CORREÇÃO: Avisa o modal que falhou, para ele salvar offline!
+    }
   };
 
   const deleteOSAttachment = async (osId: string, attId: string) => {

@@ -1,97 +1,144 @@
 // File: contexts/OfflineContext.tsx
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { initDB, addToQueue, getQueue, removeFromQueue, cacheOSData } from '../services/offlineDb';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { initDB, addToQueue, getQueue, removeFromQueue } from '../services/offlineDb';
 import { useData } from './DataContext';
+import { API_BASE } from '../components/utils/config';
 
 interface OfflineContextType {
   isOnline: boolean;
   queueLength: number;
   saveOfflineAction: (type: 'ADD_LOG' | 'UPDATE_STATUS' | 'UPLOAD_IMAGE', osId: string, payload: any) => Promise<void>;
+  forceSync: () => Promise<void>;
 }
 
 const OfflineContext = createContext<OfflineContextType>({} as OfflineContextType);
+export const useOffline = () => useContext(OfflineContext);
 
 export const OfflineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [queueLength, setQueueLength] = useState(0);
-  const { updateOS, addOSLog } = useData(); // Suas funções originais do DataContext
+  const [isSyncing, setIsSyncing] = useState(false);
+  const syncTimeoutRef = useRef<any>(null);
+  
+  // Importamos reloadFromAPI para atualizar a tela após o sync
+  const { reloadFromAPI } = useData(); 
 
-  // Monitora status da conexão
-  useEffect(() => {
-    const handleStatusChange = () => setIsOnline(navigator.onLine);
-    window.addEventListener('online', handleStatusChange);
-    window.addEventListener('offline', handleStatusChange);
-    return () => {
-      window.removeEventListener('online', handleStatusChange);
-      window.removeEventListener('offline', handleStatusChange);
-    };
+  const syncApiCall = useCallback(async (path: string, method: string, body?: any) => {
+    const token = localStorage.getItem('token');
+    let userId = '';
+    try {
+        const u = localStorage.getItem('currentUser');
+        if (u) userId = JSON.parse(u).id;
+    } catch {}
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'x-user-id': userId };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Server Error ${res.status}: ${txt}`);
+    }
+    return res.json();
   }, []);
 
-  // Monitora tamanho da fila inicial
+  const processQueue = useCallback(async () => {
+    if (isSyncing || !navigator.onLine) return;
+
+    const queue = await getQueue();
+    if (queue.length === 0) return;
+
+    setIsSyncing(true);
+    console.log(`🔄 Sincronizando ${queue.length} itens...`);
+    let processedCount = 0;
+
+    try {
+      for (const item of queue) {
+        if (!navigator.onLine) break; // Para se a net cair no meio
+
+        console.log(`Processando ${item.type} da OS ${item.osId}`);
+
+        if (item.type === 'UPDATE_STATUS') {
+           // Chama /pause com o payload correto
+           await syncApiCall(`/api/os/${item.osId}/pause`, 'POST', item.payload);
+        } 
+        else if (item.type === 'UPLOAD_IMAGE') {
+           // Lógica robusta da Outra IA para imagens
+           const attachment = item.payload.attachment || item.payload; // Aceita os dois formatos
+
+           if (!attachment?.url) {
+             console.warn('Item inválido na fila, removendo...');
+             await removeFromQueue(item.id!);
+             continue;
+           }
+           
+           // Busca OS atualizada
+           const currentOS = await syncApiCall(`/api/os/${item.osId}`, 'GET');
+           if (!currentOS) break;
+           
+           // Cria ID novo e adiciona
+           const newAtt = { ...attachment, id: `img-${Date.now()}`, uploadedAt: new Date().toISOString() };
+           const payloadOS = { ...currentOS, imageAttachments: [newAtt, ...(currentOS.imageAttachments || [])], updatedAt: new Date().toISOString() };
+           
+           // PUT manual
+           await syncApiCall(`/api/os/${item.osId}`, 'PUT', payloadOS);
+        }
+
+        await removeFromQueue(item.id!);
+        processedCount++;
+      }
+      
+      const remaining = await getQueue();
+      setQueueLength(remaining.length);
+      
+      if (processedCount > 0) {
+          await reloadFromAPI();
+          // Pequeno delay para garantir que o usuário veja
+          setTimeout(() => alert(`${processedCount} dados sincronizados com sucesso!`), 500);
+      }
+      
+    } catch (error) {
+      console.error("❌ Falha no sync:", error);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing, reloadFromAPI, syncApiCall]);
+
+  const scheduleSync = useCallback(() => {
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+        if (navigator.onLine) processQueue();
+    }, 3000); 
+  }, [processQueue]);
+
   useEffect(() => {
-    const checkQueue = async () => {
+    initDB().then(async () => {
         const q = await getQueue();
         setQueueLength(q.length);
-    };
-    checkQueue();
-  }, []);
-
-  // --- SINCRONIZAÇÃO AUTOMÁTICA ---
-  useEffect(() => {
-    if (isOnline && queueLength > 0) {
-      processQueue();
-    }
-  }, [isOnline, queueLength]);
-
-  const processQueue = async () => {
-    const queue = await getQueue();
-    console.log(`🔄 Sincronizando ${queue.length} itens...`);
-
-    for (const item of queue) {
-      try {
-        if (item.type === 'ADD_LOG') {
-           // Chama sua função real do DataContext (que salva no Firebase/Backend)
-           await addOSLog(item.osId, item.payload); 
-        } 
-        else if (item.type === 'UPDATE_STATUS') {
-           // Payload deve conter o objeto OS atualizado ou os campos parciais
-           // Aqui você precisaria ter uma função de update específica ou usar o updateOS
-           await updateOS(item.payload); 
-        }
-        else if (item.type === 'UPLOAD_IMAGE') {
-           // Payload aqui seria o arquivo (Blob) ou base64
-           // Você precisará de uma função específica no DataContext para upload de imagem
-           // await uploadOSImage(item.osId, item.payload);
-           console.log("Upload de imagem pendente de implementação no DataContext");
-        }
-
-        // Se deu certo, remove da fila local
-        if (item.id) await removeFromQueue(item.id);
-        
-      } catch (error) {
-        console.error("Erro ao sincronizar item:", item, error);
-        // Não remove da fila para tentar de novo depois
-      }
-    }
+        if (navigator.onLine && q.length > 0) scheduleSync();
+    });
+    const handleOnline = () => { setIsOnline(true); scheduleSync(); };
+    const handleOffline = () => { setIsOnline(false); if(syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current); };
     
-    // Atualiza contagem
-    const remaining = await getQueue();
-    setQueueLength(remaining.length);
-  };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
+  }, [scheduleSync]);
 
   const saveOfflineAction = async (type: any, osId: string, payload: any) => {
     await addToQueue(type, osId, payload);
-    setQueueLength(prev => prev + 1);
-    
-    // Se for status ou log, podemos atualizar o cache local para o usuário ver a mudança na tela imediatamente
-    // (Lógica de Optimistic UI)
+    const q = await getQueue();
+    setQueueLength(q.length);
   };
 
+  const forceSync = async () => {
+      if(navigator.onLine) await processQueue();
+      else alert("Sem conexão.");
+  }
+
   return (
-    <OfflineContext.Provider value={{ isOnline, queueLength, saveOfflineAction }}>
+    <OfflineContext.Provider value={{ isOnline, queueLength, saveOfflineAction, forceSync }}>
       {children}
     </OfflineContext.Provider>
   );
 };
-
-export const useOffline = () => useContext(OfflineContext);

@@ -5,8 +5,10 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { User } from '../types';
 import { useData } from './DataContext';
 
+
 // 🔥 CONFIGURAÇÃO DO ENDEREÇO DO SERVIDOR (IP DO SEU PC)
-const API_BASE = 'http://192.168.18.165:8000';
+import { API_BASE } from '../components/utils/config';
+//const API_BASE = 'http://192.168.18.165:8000';
 
 interface AuthContextType {
   user: User | null;

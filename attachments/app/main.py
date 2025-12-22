@@ -14,13 +14,11 @@ from typing import List
 from pathlib import Path
 import os
 
-
 # Routers
-# Certifique-se que estes arquivos existem nas pastas corretas
 from app.routes.users import router as users_router
 from app.routes.plants import router as plants_router
 from app.routes.maintenance import router as maintenance_router
-# 🔥 Import direto pois você roda o uvicorn da pasta attachments
+# 🔥 Import direto (o arquivo os_api.py está na raiz attachments)
 from os_api import router as os_router 
 
 print("🔄 [DEBUG] Imports concluídos. Tentando criar tabelas...")
@@ -33,7 +31,7 @@ except Exception as e:
 
 app = FastAPI(title="LoopOS API", version="1.0.0")
 
-# CORS - Permite conexão de qualquer origem (Mobile, Web, Localhost)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,10 +40,12 @@ app.add_middleware(
 )
 
 # ==============================================================================
-# 1. REGISTRO DE ROTAS DA API (COM PREFIXOS CORRETOS)
+# 1. REGISTRO DE ROTAS DA API
 # ==============================================================================
-# Isso conecta o endereço "/api/os" do frontend à lógica do os_router
-app.include_router(os_router, prefix="/api/os", tags=["os"])
+
+# 🚨 CORREÇÃO: Sem prefixo aqui, pois já está no os_api.py (/api/os)
+app.include_router(os_router) 
+
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(plants_router, prefix="/api/plants", tags=["plants"])
 app.include_router(maintenance_router, prefix="/api/maintenance", tags=["maintenance"])
@@ -90,13 +90,12 @@ def mark_notification_read(notification_id: str, db: Session = Depends(get_db)):
 # 2. SERVIR ARQUIVOS ESTÁTICOS E FRONTEND (MANTENHA NO FINAL)
 # ==============================================================================
 
-# Configuração de Diretórios
-CURRENT_DIR = Path(__file__).resolve().parent.parent # .../LOOPOS/attachments
-DIST_DIR = CURRENT_DIR.parent / "dist" # .../LOOPOS/dist
+# Caminho para attachments: Estamos em attachments/app/main.py -> subimos 2 níveis
+CURRENT_DIR = Path(__file__).resolve().parent.parent 
+DIST_DIR = CURRENT_DIR.parent / "dist"
 
 # A. Servir Imagens (Uploads)
 if CURRENT_DIR.exists():
-    # Monta /attachments para servir as imagens salvas
     app.mount("/attachments", StaticFiles(directory=CURRENT_DIR), name="attachments")
     print(f"📂 [DEBUG] Servindo anexos de: {CURRENT_DIR}")
 else:
@@ -107,21 +106,16 @@ if DIST_DIR.exists():
     print(f"✅ [DEBUG] Servindo Frontend de: {DIST_DIR}")
     app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
     
-    # Rota "Pega-Tudo" - Captura qualquer URL não atendida pela API acima
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
-        # Proteção: Se a URL começar com 'api' ou 'attachments' e chegou aqui,
-        # significa que a rota não existe no backend. Retorna 404 JSON, não HTML.
         if full_path.startswith("api") or full_path.startswith("attachments"):
             raise HTTPException(status_code=404, detail="Not Found")
             
         file_path = DIST_DIR / full_path
         
-        # Se for um arquivo físico (ex: favicon.ico, manifest.json), serve ele
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         
-        # Para qualquer outra rota (ex: /dashboard, /login), retorna o index.html do React
         return FileResponse(DIST_DIR / "index.html")
 else:
     print(f"⚠️ [ERRO] Pasta 'dist' não encontrada em {DIST_DIR}. Rode 'npm run build' na raiz.")

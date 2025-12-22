@@ -5,7 +5,8 @@ import { format, isValid } from 'date-fns';
 import { OS, PlantMaintenancePlan, TaskTemplate } from '../../types';
 
 // 🔥 DEFINIÇÃO DO SERVIDOR
-const API_BASE = 'http://192.168.18.165:8000';
+import { API_BASE } from './config';
+//const API_BASE = 'http://192.168.18.165:8000';
 
 // --- HELPERS ---
 
