@@ -1,67 +1,89 @@
 // File: services/offlineDb.ts
+//
+// Banco offline (IndexedDB via idb) para:
+// - cache de OS ("os-data")
+// - fila de sincronização ("sync-queue")
+//
+// IMPORTANTE:
+// - A "sync-queue" guarda ações offline para serem replayadas quando voltar online.
+// - O type inclui DELETE_IMAGE para permitir exclusão offline e sync posterior.
+
 import { openDB, DBSchema } from 'idb';
-import { OS, OSLog, ImageAttachment } from '../types';
+import { OS } from '../types';
+
+export type OfflineQueueActionType =
+  | 'ADD_LOG'
+  | 'UPDATE_STATUS'
+  | 'UPLOAD_IMAGE'
+  | 'DELETE_IMAGE';
+
+export interface OfflineQueueItem {
+  id?: number;
+  type: OfflineQueueActionType;
+  osId: string;
+  payload: any;
+  timestamp: number;
+}
 
 interface LoopOSDB extends DBSchema {
-  // Tabela para guardar os dados da OS para consulta offline
   'os-data': {
     key: string;
     value: OS;
   };
-  // Fila de Ações para Sincronizar (Logs, Status, Fotos)
   'sync-queue': {
     key: number;
-    value: {
-      id?: number;
-      type: 'ADD_LOG' | 'UPDATE_STATUS' | 'UPLOAD_IMAGE';
-      osId: string;
-      payload: any;
-      timestamp: number;
-    };
+    value: OfflineQueueItem;
     indexes: { 'by-os': string };
   };
 }
 
 const DB_NAME = 'loopos-offline-db';
+const DB_VERSION = 1;
 
 export const initDB = async () => {
-  return openDB<LoopOSDB>(DB_NAME, 1, {
+  return openDB<LoopOSDB>(DB_NAME, DB_VERSION, {
     upgrade(db) {
+      // Store de cache de OS
       if (!db.objectStoreNames.contains('os-data')) {
         db.createObjectStore('os-data', { keyPath: 'id' });
       }
+
+      // Store da fila de sincronização
       if (!db.objectStoreNames.contains('sync-queue')) {
-        const store = db.createObjectStore('sync-queue', { keyPath: 'id', autoIncrement: true });
+        const store = db.createObjectStore('sync-queue', {
+          keyPath: 'id',
+          autoIncrement: true,
+        });
         store.createIndex('by-os', 'osId');
       }
     },
   });
 };
 
-// Salva OS inteira localmente (para poder abrir o modal offline)
 export const cacheOSData = async (os: OS) => {
   const db = await initDB();
   await db.put('os-data', os);
 };
 
-// Adiciona uma ação na fila
-export const addToQueue = async (type: 'ADD_LOG' | 'UPDATE_STATUS' | 'UPLOAD_IMAGE', osId: string, payload: any) => {
+export const addToQueue = async (
+  type: OfflineQueueActionType,
+  osId: string,
+  payload: any
+) => {
   const db = await initDB();
   await db.add('sync-queue', {
     type,
     osId,
     payload,
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 };
 
-// Pega todos os itens da fila
 export const getQueue = async () => {
   const db = await initDB();
   return db.getAll('sync-queue');
 };
 
-// Remove item da fila após sucesso
 export const removeFromQueue = async (id: number) => {
   const db = await initDB();
   await db.delete('sync-queue', id);

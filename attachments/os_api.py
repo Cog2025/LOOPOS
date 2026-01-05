@@ -1,5 +1,5 @@
 # File: attachments/os_api.py
-from fastapi import APIRouter, HTTPException, Depends, Body, Header
+from fastapi import APIRouter, HTTPException, Depends, Body, Header, UploadFile, File, Form
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ import base64
 import os
 import shutil
 from pathlib import Path
+
 
 # --- MODELO DE DADOS ---
 class OSModel(BaseModel):
@@ -139,6 +140,71 @@ def verify_creation_permission(user: models.User, plant_id: str):
         raise HTTPException(403, f"Acesso Negado: Perfil '{user.role}' não pode criar OS.")
     return True
 
+
+def _safe_filename(name: str) -> str:
+    name = (name or "").strip()
+    keep = []
+    for c in name:
+        if c.isalnum() or c in (" ", ".", "_", "-"):
+            keep.append(c)
+    out = "".join(keep).strip().replace(" ", "_")
+    return out or f"image_{uuid4().hex}.jpg"
+
+
+@router.post("/api/os/{os_id}/attachments", response_model=OSModel)
+def upload_os_attachments(
+    os_id: str,
+    files: List[UploadFile] = File(...),
+    caption: str = Form("Foto Geral"),
+    x_user_id: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
+    if not db_os:
+        raise HTTPException(404, "OS não encontrada")
+
+    # (Opcional) pega nome do usuário
+    user_name = None
+    if x_user_id:
+        user = db.query(models.User).filter(models.User.id == x_user_id).first()
+        user_name = user.name if user else None
+
+    target_dir = get_images_dir(os_id)
+    os.makedirs(target_dir, exist_ok=True)
+
+    current = db_os.imageAttachments or []
+    if not isinstance(current, list):
+        current = []
+
+    now = datetime.now(timezone.utc).isoformat()
+    new_items = []
+
+    for f in files:
+        original = _safe_filename(f.filename)
+        unique = f"{uuid4().hex}_{original}"
+        file_path = os.path.join(target_dir, unique)
+
+        with open(file_path, "wb") as out:
+            shutil.copyfileobj(f.file, out)
+
+        new_items.append(
+            {
+                "id": f"img-{uuid4().hex}",
+                "url": f"/attachments/images/{os_id}/{unique}",
+                "fileName": original,
+                "caption": caption,
+                "uploadedBy": user_name or "Sistema",
+                "uploadedAt": now,
+            }
+        )
+
+    db_os.imageAttachments = new_items + current
+    db_os.updatedAt = now
+    db.commit()
+    db.refresh(db_os)
+    return db_os
+
+
 # --- ROTAS EXPLÍCITAS /api/os ---
 
 @router.get("/api/os", response_model=List[OSModel])
@@ -239,12 +305,14 @@ def pause_execution(
     
     user = db.query(models.User).filter(models.User.id == x_user_id).first()
     
+    # 1. Recupera timestamps
     client_end = payload.get("clientEndTime")
     now_dt = datetime.fromisoformat(client_end.replace('Z', '+00:00')) if client_end else datetime.now(timezone.utc)
     
     start_iso = db_os.executionStart
     if not start_iso: start_iso = payload.get("clientStartTime")
     
+    # 2. Calcula duração
     duration = 0
     if payload.get("durationSeconds") is not None:
         duration = int(payload.get("durationSeconds"))
@@ -254,7 +322,28 @@ def pause_execution(
             duration = int((now_dt - start_dt).total_seconds())
         except: duration = 0
     
+    # 3. Lógica de Itens Concluídos (CORRIGIDA)
     new_subtasks = payload.get("subtasksStatus", [])
+    completed_now = [] 
+    
+    # Mapeia estado anterior para saber o que mudou
+    old_subtasks = db_os.subtasksStatus or []
+    if not isinstance(old_subtasks, list): old_subtasks = []
+    
+    old_map = {}
+    for st in old_subtasks:
+        if isinstance(st, dict):
+            old_map[st.get('id')] = st.get('done', False)
+            
+    # Compara: Se está feito AGORA, mas não estava ANTES -> Foi feito nesta sessão
+    for st in new_subtasks:
+        if isinstance(st, dict):
+            st_id = st.get('id')
+            is_done = st.get('done', False)
+            was_done = old_map.get(st_id, False)
+            if is_done and not was_done:
+                # Salva o texto da tarefa concluída
+                completed_now.append(st.get('text', f"Item {st_id}"))
     
     session_log = {
         "sessionId": str(uuid4()),
@@ -263,7 +352,7 @@ def pause_execution(
         "startTime": start_iso or now_dt.isoformat(),
         "endTime": now_dt.isoformat(),
         "durationSeconds": duration,
-        "completedSubtasks": [], 
+        "completedSubtasks": completed_now, # ✅ Agora salva a lista real
         "syncedFromOffline": bool(client_end)
     }
     
