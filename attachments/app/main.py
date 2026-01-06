@@ -119,3 +119,9 @@ if DIST_DIR.exists():
         return FileResponse(DIST_DIR / "index.html")
 else:
     print(f"⚠️ [ERRO] Pasta 'dist' não encontrada em {DIST_DIR}. Rode 'npm run build' na raiz.")
+
+    # Adicione isso no main.py para debug
+print(f"📍 [DEBUG MAIN] __file__: {Path(__file__)}")
+print(f"📍 [DEBUG MAIN] CURRENT_DIR (StaticFiles): {CURRENT_DIR}")
+print(f"📍 [DEBUG MAIN] Existe a pasta CURRENT_DIR? {CURRENT_DIR.exists()}")
+print(f"📍 [DEBUG MAIN] Existe a pasta images dentro dela? {(CURRENT_DIR / 'images').exists()}")

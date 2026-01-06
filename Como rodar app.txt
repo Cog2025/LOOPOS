@@ -1,0 +1,25 @@
+- Para rodar a api:
+1) Na pasta "C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\attachments" execute
+python run.py
+--------------
+- Para rodar o localhost:
+1) Na pasta "C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS" execute:
+npm run dev
+---------------
+- Para criar nova versão do app:
+1) No arquivo "build.gradle", na pasta "C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\android\app" é necessário modificar, a cada nova versão do app, o número ao lado de "versionCode" com um número a mais do anterior. Também deve ser mudado o termo entre aspas ao lado de "versionName" para algo que faça sentido.
+
+2) Na pasta "C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS" execute:
+npm run build
+npx cap sync
+cd android
+.\gradlew bundleRelease
+.\gradlew assembleRelease
+
+3) O arquivo com extensão "aab", que é o que será enviado para a loja do Google Play estará na pasta "C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\android\app\build\outputs\bundle\release"
+
+4) O apk gerado para ser instalado direto no celular estará na pasta "C:\Users\leona\Nextcloud\06. OPERAÇÃO\03. Tempo Real\LoopOS\LOOPOS\android\app\build\outputs\apk\release"
+
+
+--
+Atualmente o ip da maquina está estatico e deve ser mantiado assim, caso mude, mude tambem nos arquivos "capacitor.config.ts" e ".env.local".

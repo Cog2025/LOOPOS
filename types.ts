@@ -1,8 +1,6 @@
 // File: types.ts
 // Este arquivo centraliza todas as definições de tipos e interfaces TypeScript.
 
-
-// ✅ VOLTANDO PARA OS NOMES ORIGINAIS DO SEU SIDEBAR
 export type ViewType = 'KANBAN' | 'CALENDAR' | 'SCHEDULE_52_WEEKS' | 'MAINTENANCE_PLANS';
 
 export enum Role {
@@ -53,13 +51,13 @@ export interface SubPlant {
 
 export interface Plant {
     id: string;
-    client: string;
+    client?: string; 
     name: string;
     stringCount: number;
     trackerCount: number;
     subPlants: SubPlant[];
     assets: string[];
-    coordinatorId?: string;
+    coordinatorId?: string | null;
     supervisorIds?: string[];
     technicianIds?: string[];
     assistantIds?: string[];
@@ -75,10 +73,10 @@ export interface OSLog {
 export interface ImageAttachment {
     id: string;
     url: string;
-    caption?: string;
-    fileName?: string;
+    fileName?: string; 
+    caption?: string; 
     uploadedBy?: string;
-    uploadedAt?: string;
+    uploadedAt: string;
 }
 
 export interface SubtaskItem {
@@ -95,7 +93,8 @@ export interface ExecutionSession {
     startTime: string;
     endTime: string;
     durationSeconds: number;
-    completedSubtasks: string[];
+    completedSubtasks?: string[]; 
+    syncedFromOffline?: boolean;
 }
 
 export interface OS {
@@ -105,21 +104,21 @@ export interface OS {
     status: OSStatus;
     priority: Priority;
     plantId: string;
-    technicianId?: string;
-    supervisorId?: string;
-    assistantId?: string;
+    technicianId: string;
+    supervisorId: string;
+    assistantId: string;
+    assets: string[]; 
+    activity: string;
     startDate: string;
     endDate?: string;
-    
-    // Campos necessários
-    createdAt: string; 
-    updatedAt: string;
-    
-    activity: string;
-    assets: string[];
     logs: OSLog[];
     attachmentsEnabled: boolean;
     imageAttachments: ImageAttachment[];
+    
+    // ✅ CORREÇÃO: Adicionados campos de timestamp que faltavam
+    createdAt?: string;
+    updatedAt?: string;
+
     executionStart?: string;
     executionTimeSeconds?: number;
     currentExecutorId?: string | null;
@@ -153,10 +152,10 @@ export interface TaskTemplate {
     classification1?: string;
     classification2?: string;
     estimated_duration_minutes: number;
-    planned_downtime_minutes?: number; // Campo novo mantido
+    planned_downtime_minutes?: number;
     frequency: string;
     frequency_days: number;
-    subtasks: string[];
+    subtasks: any[]; 
 }
 
 export interface PlantMaintenancePlan {
@@ -169,8 +168,8 @@ export interface PlantMaintenancePlan {
     classification1?: string;
     classification2?: string;
     estimated_duration_minutes: number;
-    planned_downtime_minutes?: number; // Campo novo mantido
+    planned_downtime_minutes?: number;
     frequency_days: number;
-    subtasks: string[];
     active: boolean;
+    subtasks: any[];
 }

@@ -99,16 +99,22 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
       uploadedAt: new Date().toISOString(),
     }));
 
-    patchOS(liveOS.id, {
-      imageAttachments: [...previews, ...(liveOS.imageAttachments || [])] as any,
-    });
+    // 🔥 CORREÇÃO DA DUPLICIDADE 🔥
+    // Só atualizamos o estado local com o preview se estivermos OFFLINE.
+    // Se estivermos ONLINE, esperamos o servidor devolver a lista oficial atualizada.
+    if (!isOnline) {
+      patchOS(liveOS.id, {
+        imageAttachments: [...previews, ...(liveOS.imageAttachments || [])] as any,
+      });
+    }
 
     if (isOnline) {
+      // Online: Envia e deixa o reloadFromAPI atualizar a tela depois
       await uploadOSAttachments(liveOS.id, files, caption);
       return;
     }
 
-    // Offline: mantém seu modelo atual (base64 na fila), para o sync continuar funcionando
+    // Offline: mantém a lógica de fila e base64
     for (const f of files) {
       const dataUrl = await blobToDataUrl(f);
       await saveOfflineAction('UPLOAD_IMAGE', liveOS.id, {

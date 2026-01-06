@@ -2,7 +2,7 @@
 // A ordem é crucial: DataProvider > AuthProvider > OfflineProvider.
 // Motivo: DataProvider é a base, AuthProvider gerencia o usuário, e OfflineProvider usa ambos.
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import './style.css';
 import { DataProvider } from './contexts/DataContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -25,6 +25,31 @@ const AppContent: React.FC = () => {
 // O componente App principal envolve a aplicação com os provedores de contexto necessários.
 // A ordem dos provedores é crucial: DataProvider > AuthProvider > OfflineProvider
 const App: React.FC = () => {
+  // 🔥 CÓDIGO DE AUTO-LIMPEZA (Execute uma vez e depois remova se quiser)
+  useEffect(() => {
+    const hasCleaned = localStorage.getItem('HAS_CLEANED_GHOSTS_V1');
+    if (!hasCleaned) {
+      console.warn("🧹 Executando Limpeza Nuclear de Dados Fantasmas...");
+      
+      // 1. Limpa LocalStorage (onde ficam os tokens e dados em cache)
+      localStorage.clear();
+      
+      // 2. Tenta limpar o IndexedDB (onde fica a fila offline)
+      if (window.indexedDB) {
+        const req = window.indexedDB.deleteDatabase('loopos-offline-db');
+        req.onsuccess = () => console.log("✅ Banco Offline deletado com sucesso.");
+        req.onerror = () => console.log("⚠️ Erro ao deletar banco offline.");
+      }
+
+      // 3. Marca que já limpou para não limpar de novo no próximo F5
+      localStorage.setItem('HAS_CLEANED_GHOSTS_V1', 'true');
+      
+      // 4. Força recarregamento da página para aplicar a limpeza
+      alert("O sistema realizou uma limpeza de segurança. Por favor, faça login novamente.");
+      window.location.reload();
+    }
+  }, []);
+  // 🔥 FIM DA LIMPEZA
   return (
     // DataProvider: Fornece todos os dados da aplicação (usuários, usinas, OSs).
     <DataProvider>

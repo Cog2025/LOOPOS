@@ -2,19 +2,10 @@
 //
 // Contexto global para gerenciamento de estado da aplicação.
 //
-// Objetivos principais deste arquivo:
-// - Manter cache em LocalStorage com fallback quando estoura quota (QuotaExceeded).
-// - Recarregar dados do backend e fazer merge com o que existe localmente.
-// - Operações CRUD (users, plants, os, notifications, templates).
-//
 // ✅ Correções deste patch:
-// 1) "Online real": adiciona ping rápido no backend (GET /api/os?_ping=1) com timeout.
-// 2) patchOS NÃO tenta PUT se o backend estiver inacessível (evita spam de "Failed to fetch").
-// 3) reloadFromAPI não tenta buscar tudo se o backend estiver inacessível (evita flood de erros).
-//
-// Observação importante:
-// - O ping não resolve IP errado; ele só detecta rápido quando o backend está unreachable,
-//   para o app se comportar corretamente (fila/sync e UI offline).
+// 1) addOS e addOSBatch agora RESPEITAM o 'subtasksStatus' vindo do formulário.
+//    (Antes estava subtasksStatus: [], o que apagava o checklist ao salvar).
+// 2) Mantém as correções anteriores de Ping e Arrays de Planos.
 
 import React, {
   createContext,
@@ -56,7 +47,7 @@ interface DataContextType {
   osList: OS[];
   notifications: Notification[];
   taskTemplates: TaskTemplate[];
-  maintenancePlans: Record<string, PlantMaintenancePlan>;
+  maintenancePlans: Record<string, PlantMaintenancePlan[]>;
 
   setAuthHeaders: (h: Record<string, string>) => void;
 
@@ -89,7 +80,7 @@ interface DataContextType {
   filterOSForUser: (u: User) => OS[];
 
   fetchTaskTemplates: (category?: string) => Promise<void>;
-  fetchPlantPlan: (plantId: string) => Promise<PlantMaintenancePlan | null>;
+  fetchPlantPlan: (plantId: string) => Promise<PlantMaintenancePlan[] | null>;
   initializePlantPlan: (plantId: string, mode: string, customTasks?: any[]) => Promise<void>;
   updatePlantTask: (taskId: string, data: Partial<PlantMaintenancePlan>) => Promise<void>;
   createPlantTask: (plantId: string, data: any) => Promise<void>;
@@ -103,7 +94,7 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 // -----------------------------------------------------------------------------
-// LocalStorage helper com fallback em caso de quota excedida
+// LocalStorage helper com fallback
 // -----------------------------------------------------------------------------
 function useLocalStorageState<T>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
   const [storedValue, setStoredValue] = useState<T>(() => {
@@ -122,8 +113,7 @@ function useLocalStorageState<T>(key: string, initialValue: T): [T, React.Dispat
         try {
           window.localStorage.setItem(key, JSON.stringify(next));
         } catch (error) {
-          // Evita crash quando LocalStorage estoura quota
-          console.warn(`[LocalStorage] Falha ao salvar '${key}': limite excedido. Mantendo apenas em memória.`);
+          console.warn(`[LocalStorage] Falha ao salvar '${key}': limite excedido.`);
         }
         return next;
       });
@@ -171,7 +161,7 @@ const normalizeOS = (o: any): OS => ({
 });
 
 // -----------------------------------------------------------------------------
-// Fetch com timeout (AbortController) para ping e chamadas sensíveis
+// Fetch com timeout
 // -----------------------------------------------------------------------------
 async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -180,7 +170,6 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const id = window.setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } finally {
@@ -195,45 +184,29 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [osList, setOsList] = useLocalStorageState<OS[]>('osList', []);
 
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
-  const [maintenancePlans, setMaintenancePlans] = useState<Record<string, PlantMaintenancePlan>>({});
+  const [maintenancePlans, setMaintenancePlans] = useState<Record<string, PlantMaintenancePlan[]>>({});
 
-  // Guarda headers auth (ex.: Authorization) que outros lugares setam
   const headersRef = useRef<Record<string, string>>({});
-
-  // Ref para sempre ter a OS list mais recente (evita closure stale em patchOS)
   const osListRef = useRef<OS[]>(osList);
-  useEffect(() => {
-    osListRef.current = osList;
-  }, [osList]);
-
+  useEffect(() => { osListRef.current = osList; }, [osList]);
   const plantsRef = useRef<Plant[]>(plants);
-  useEffect(() => {
-    plantsRef.current = plants;
-  }, [plants]);
+  useEffect(() => { plantsRef.current = plants; }, [plants]);
 
-  // ---------------------------------------------------------------------------
-  // "Online real": ping no backend com cache curto
-  // ---------------------------------------------------------------------------
   const pingCacheRef = useRef<{ ok: boolean; at: number }>({ ok: false, at: 0 });
 
   const pingBackend = useCallback(
     async (force = false): Promise<boolean> => {
-      // Sem rede do dispositivo = sem ping
       if (!navigator.onLine) {
         pingCacheRef.current = { ok: false, at: Date.now() };
         return false;
       }
-
       const now = Date.now();
       const ageMs = now - (pingCacheRef.current.at || 0);
-
-      // Cache de 5s para não pingar toda hora
       if (!force && ageMs < 5000) return pingCacheRef.current.ok;
 
       try {
         const safePath = `/api/os?_ping=${now}`;
         const url = `${API_BASE}${safePath}`;
-
         const headers: Record<string, string> = {
           Accept: 'application/json',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -242,15 +215,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           ...headersRef.current,
         };
 
-        const res = await fetchWithTimeout(
-          url,
-          {
-            method: 'GET',
-            headers,
-          },
-          1500
-        );
-
+        const res = await fetchWithTimeout(url, { method: 'GET', headers }, 3000);
         const ok = res.ok;
         pingCacheRef.current = { ok, at: now };
         return ok;
@@ -262,25 +227,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     []
   );
 
-  // ---------------------------------------------------------------------------
-  // API wrapper (não faz ping automaticamente para não quebrar fluxos existentes)
-  // ---------------------------------------------------------------------------
   const api = useCallback((path: string, init?: RequestInit) => {
     const safePath = path.startsWith('/') ? path : `/${path}`;
     const url = safePath.startsWith('http') ? safePath : `${API_BASE}${safePath}`;
-
     const defaultHeaders: Record<string, string> = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
     };
-
-    const headers = {
-      ...defaultHeaders,
-      ...(init?.headers || {}),
-      ...headersRef.current,
-    };
-
+    const headers = { ...defaultHeaders, ...(init?.headers || {}), ...headersRef.current };
     return fetch(url, { ...init, headers });
   }, []);
 
@@ -288,10 +243,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     headersRef.current = { ...headersRef.current, ...h };
   }, []);
 
-  const loadUserData = useCallback(async () => {
-    // Mantido como stub (não havia implementação funcional no arquivo original).
-    return;
-  }, []);
+  const loadUserData = useCallback(async () => { return; }, []);
 
   const clearData = useCallback(() => {
     setUsers([]);
@@ -304,13 +256,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const toArray = (x: any): any[] => (Array.isArray(x) ? x : Array.isArray(x?.data) ? x.data : []);
 
-  // ---------------------------------------------------------------------------
-  // reloadFromAPI com ping (evita flood de erros quando API_BASE está unreachable)
-  // ---------------------------------------------------------------------------
   const reloadFromAPI = useCallback(async () => {
     const ok = await pingBackend(false);
     if (!ok) {
-      console.warn('⚠️ reloadFromAPI abortado: backend offline/unreachable.');
+      console.warn('⚠️ reloadFromAPI abortado: backend offline.');
       return;
     }
 
@@ -330,45 +279,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (U.length) setUsers(U);
       if (P.length) setPlants(P);
 
-      // Merge OS: preserva campos que às vezes a API vem vazia e local tem
       setOsList((currentLocalList) => {
         if (rawO.length === 0 && currentLocalList.length > 0) return currentLocalList;
-
         const currentMap = new Map(currentLocalList.map((item) => [item.id, item]));
         const merged = rawO.map((apiItem) => {
           const normalized = normalizeOS(apiItem);
           const localItem = currentMap.get(apiItem.id);
-
           if (localItem) {
             if (!normalized.assistantId && localItem.assistantId) normalized.assistantId = localItem.assistantId;
             if (!normalized.subPlantId && localItem.subPlantId) normalized.subPlantId = localItem.subPlantId;
             if (!normalized.inverterId && localItem.inverterId) normalized.inverterId = localItem.inverterId;
-
-            // Preserva anexos locais se a API vier vazia (ex.: upload/ações offline recentes)
             if ((normalized.imageAttachments || []).length === 0 && (localItem.imageAttachments || []).length > 0) {
               normalized.imageAttachments = localItem.imageAttachments;
             }
-
-            // Preserva executionHistory local se a API vier vazia (caso offline)
             if ((normalized.executionHistory || []).length === 0 && (localItem.executionHistory || []).length > 0) {
               normalized.executionHistory = localItem.executionHistory;
             }
           }
-
           return normalized;
         });
-
         return merged;
       });
 
-      // Merge notifications (Local + API) removendo duplicatas
       setNotifications((currentNotifs) => {
         const apiNotifs = N as Notification[];
         const combined = [...currentNotifs, ...apiNotifs].reduce((acc, curr) => {
           if (!acc.find((x) => x.id === curr.id)) acc.push(curr);
           return acc;
         }, [] as Notification[]);
-
         return combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       });
     } catch (err) {
@@ -376,24 +314,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [api, pingBackend, setNotifications, setOsList, setPlants, setUsers]);
 
-  // ---------------------------------------------------------------------------
-  // Helpers de merge (mantidos)
-  // ---------------------------------------------------------------------------
   const mergeSubPlantData = (savedPlant: any, localPlant: Partial<Plant>) => {
     if (!savedPlant?.subPlants || !localPlant?.subPlants) return savedPlant;
-
     savedPlant.subPlants = savedPlant.subPlants.map((sp: any) => {
       const original = localPlant.subPlants!.find(
         (osp: any) => osp.id === sp.id || (osp.name === sp.name && osp.inverterCount === sp.inverterCount)
       );
-
       if (original && sp.inverterStartIndex === undefined && original.inverterStartIndex !== undefined) {
         sp.inverterStartIndex = original.inverterStartIndex;
       }
-
       return sp;
     });
-
     return savedPlant;
   };
 
@@ -404,10 +335,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return savedOS;
   };
 
-  const pushNotification = useCallback(
-    async (userId: string, message: string) => {
+  const pushNotification = useCallback(async (userId: string, message: string) => {
       if (!userId) return;
-
       const notif: Notification = {
         id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         userId,
@@ -415,163 +344,113 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         read: false,
         timestamp: new Date().toISOString(),
       };
-
       setNotifications((prev) => [notif, ...prev]);
-
-      // Tenta persistir no backend, mas não quebra se estiver offline
       try {
         const ok = await pingBackend(false);
         if (!ok) return;
-
         await api('/api/notifications', { method: 'POST', body: JSON.stringify(notif) });
       } catch (e) {
         console.error('Falha ao salvar notificação no backend (mantida local)', e);
       }
-    },
-    [api, pingBackend, setNotifications]
+    }, [api, pingBackend, setNotifications]
   );
 
   // ---------------------------------------------------------------------------
   // Maintenance/Templates
   // ---------------------------------------------------------------------------
-  const fetchTaskTemplates = useCallback(
-    async (category?: string) => {
-      const ok = await pingBackend(false);
-      if (!ok) return;
-
+  const fetchTaskTemplates = useCallback(async (category?: string) => {
       let url = '/api/maintenance/templates';
       if (category) url += `?asset_category=${encodeURIComponent(category)}`;
-
       try {
         const res = await api(url);
         if (res.ok) setTaskTemplates(await res.json());
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [api, pingBackend]
+      } catch (e) { console.error(e); }
+    }, [api]
   );
 
-  const fetchPlantPlan = useCallback(
-    async (plantId: string): Promise<PlantMaintenancePlan | null> => {
-      const ok = await pingBackend(false);
-      if (!ok) return null;
-
+  const fetchPlantPlan = useCallback(async (plantId: string): Promise<PlantMaintenancePlan[] | null> => {
       try {
         const res = await api(`/api/maintenance/plant-plans/${plantId}`);
         if (res.ok) {
-          const data = (await res.json()) as PlantMaintenancePlan;
+          const data = (await res.json()) as PlantMaintenancePlan[];
           setMaintenancePlans((prev) => ({ ...prev, [plantId]: data }));
           return data;
         }
         return null;
       } catch (e) {
-        console.error(e);
+        console.error("Erro ao buscar planos:", e);
         return null;
       }
-    },
-    [api, pingBackend]
+    }, [api]
   );
 
-  const initializePlantPlan = useCallback(
-    async (plantId: string, mode: string, customTasks: any[] = []) => {
+  const initializePlantPlan = useCallback(async (plantId: string, mode: string, customTasks: any[] = []) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
       await api(`/api/maintenance/plant-plans/${plantId}/init`, {
         method: 'POST',
         body: JSON.stringify({ mode, custom_tasks: customTasks }),
       });
-
       await fetchPlantPlan(plantId);
       await reloadFromAPI();
-    },
-    [api, fetchPlantPlan, pingBackend, reloadFromAPI]
+    }, [api, fetchPlantPlan, pingBackend, reloadFromAPI]
   );
 
-  const updatePlantTask = useCallback(
-    async (taskId: string, data: Partial<PlantMaintenancePlan>) => {
+  const updatePlantTask = useCallback(async (taskId: string, data: Partial<PlantMaintenancePlan>) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
-      await api(`/api/maintenance/plant-plans/${taskId}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      });
-    },
-    [api, pingBackend]
+      await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'PUT', body: JSON.stringify(data) });
+    }, [api, pingBackend]
   );
 
-  const createPlantTask = useCallback(
-    async (plantId: string, data: any) => {
+  const createPlantTask = useCallback(async (plantId: string, data: any) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
-      await api(`/api/maintenance/plant-plans/${plantId}`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-
+      await api(`/api/maintenance/plant-plans/${plantId}`, { method: 'POST', body: JSON.stringify(data) });
       await fetchPlantPlan(plantId);
-    },
-    [api, fetchPlantPlan, pingBackend]
+    }, [api, fetchPlantPlan, pingBackend]
   );
 
-  const deletePlantTask = useCallback(
-    async (taskId: string) => {
+  const deletePlantTask = useCallback(async (taskId: string) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
       const res = await api(`/api/maintenance/plant-plans/${taskId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Falha ao deletar tarefa.');
-    },
-    [api, pingBackend]
+    }, [api, pingBackend]
   );
 
-  const addTemplate = useCallback(
-    async (data: any) => {
+  const addTemplate = useCallback(async (data: any) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
       await api('/api/maintenance/templates', { method: 'POST', body: JSON.stringify(data) });
       await fetchTaskTemplates();
-    },
-    [api, fetchTaskTemplates, pingBackend]
+    }, [api, fetchTaskTemplates, pingBackend]
   );
 
-  const updateTemplate = useCallback(
-    async (id: string, data: any) => {
+  const updateTemplate = useCallback(async (id: string, data: any) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
       await api(`/api/maintenance/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
       await fetchTaskTemplates();
-    },
-    [api, fetchTaskTemplates, pingBackend]
+    }, [api, fetchTaskTemplates, pingBackend]
   );
 
-  const deleteTemplate = useCallback(
-    async (id: string) => {
+  const deleteTemplate = useCallback(async (id: string) => {
       const ok = await pingBackend(false);
       if (!ok) return;
-
       await api(`/api/maintenance/templates/${id}`, { method: 'DELETE' });
       await fetchTaskTemplates();
-    },
-    [api, fetchTaskTemplates, pingBackend]
+    }, [api, fetchTaskTemplates, pingBackend]
   );
 
   // ---------------------------------------------------------------------------
-  // Filtro de OS por usuário
+  // Filtro de OS
   // ---------------------------------------------------------------------------
-  const filterOSForUser = useCallback(
-    (u: User): OS[] => {
+  const filterOSForUser = useCallback((u: User): OS[] => {
       if ([Role.ADMIN, Role.OPERATOR].includes(u.role)) return osList;
-
       if (u.role === Role.TECHNICIAN || u.role === Role.ASSISTANT) {
         return osList.filter((o) => o.technicianId === u.id || o.assistantId === u.id);
       }
-
       if ([Role.CLIENT, Role.COORDINATOR, Role.SUPERVISOR].includes(u.role)) {
         const norm = u.name.trim().toLowerCase();
         return osList.filter((o) => {
@@ -582,122 +461,93 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           );
         });
       }
-
       return [];
-    },
-    [osList]
+    }, [osList]
   );
 
   // ---------------------------------------------------------------------------
-  // Users CRUD
+  // CRUD Users
   // ---------------------------------------------------------------------------
-  const addUser = useCallback(
-    async (u: Omit<User, 'id'>) => {
+  const addUser = useCallback(async (u: Omit<User, 'id'>) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const res = await api('/api/users', { method: 'POST', body: JSON.stringify(u) });
       if (!res.ok) throw new Error('Erro ao criar usuário');
-
       const saved = (await res.json()) as User;
       setUsers((prev) => [...prev, saved]);
       return saved;
-    },
-    [api, pingBackend, setUsers]
+    }, [api, pingBackend, setUsers]
   );
 
-  const updateUser = useCallback(
-    async (u: User) => {
+  const updateUser = useCallback(async (u: User) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const res = await api(`/api/users/${u.id}`, { method: 'PUT', body: JSON.stringify(u) });
       if (!res.ok) throw new Error('Erro ao atualizar');
-
       const saved = (await res.json()) as User;
       setUsers((prev) => prev.map((x) => (x.id === saved.id ? saved : x)));
       return saved;
-    },
-    [api, pingBackend, setUsers]
+    }, [api, pingBackend, setUsers]
   );
 
-  const deleteUser = useCallback(
-    async (id: string) => {
+  const deleteUser = useCallback(async (id: string) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       await api(`/api/users/${id}`, { method: 'DELETE' });
       setUsers((prev) => prev.filter((x) => x.id !== id));
-    },
-    [api, pingBackend, setUsers]
+    }, [api, pingBackend, setUsers]
   );
 
   // ---------------------------------------------------------------------------
-  // Plants CRUD
+  // CRUD Plants
   // ---------------------------------------------------------------------------
-  const addPlant = useCallback(
-    async (plant: Omit<Plant, 'id'>, assignments?: AssignmentsDTO) => {
+  const addPlant = useCallback(async (plant: Omit<Plant, 'id'>, assignments?: AssignmentsDTO) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const payload = { ...plant, ...(assignments || {}) };
       const res = await api('/api/plants', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Erro ao criar usina');
-
       let saved = await res.json();
       saved = mergeSubPlantData(saved, plant);
       const normalized = normalizePlant(saved);
       setPlants((prev) => [...prev, normalized]);
       return normalized;
-    },
-    [api, pingBackend, setPlants]
+    }, [api, pingBackend, setPlants]
   );
 
-  const updatePlant = useCallback(
-    async (plant: Plant, assignments?: AssignmentsDTO) => {
+  const updatePlant = useCallback(async (plant: Plant, assignments?: AssignmentsDTO) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const payload = { ...plant, ...(assignments || {}) };
       const res = await api(`/api/plants/${plant.id}`, { method: 'PUT', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Erro ao atualizar usina');
-
       let saved = await res.json();
       saved = mergeSubPlantData(saved, plant);
       const normalized = normalizePlant(saved);
-
       setPlants((prev) => prev.map((p) => (p.id === normalized.id ? normalized : p)));
-    },
-    [api, pingBackend, setPlants]
+    }, [api, pingBackend, setPlants]
   );
 
-  const deletePlant = useCallback(
-    async (id: string) => {
+  const deletePlant = useCallback(async (id: string) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       await api(`/api/plants/${id}`, { method: 'DELETE' });
       setPlants((prev) => prev.filter((p) => p.id !== id));
-    },
-    [api, pingBackend, setPlants]
+    }, [api, pingBackend, setPlants]
   );
 
   // ---------------------------------------------------------------------------
-  // OS CRUD
+  // CRUD OS (🔥 CORREÇÃO CRÍTICA AQUI 🔥)
   // ---------------------------------------------------------------------------
-  const addOS = useCallback(
-    async (osData: any) => {
+  const addOS = useCallback(async (osData: any) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const now = new Date().toISOString();
-      const nextIdNumber =
-        (osListRef.current.length > 0
+      const nextIdNumber = (osListRef.current.length > 0
           ? Math.max(...osListRef.current.map((os) => parseInt((os.id || '').replace(/\D/g, ''), 10) || 0))
           : 0) + 1;
-
       const newId = `OS${String(nextIdNumber).padStart(4, '0')}`;
-
+      
       const payload: OS = {
         ...osData,
         id: newId,
@@ -707,43 +557,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         attachmentsEnabled: true,
         logs: [],
         imageAttachments: [],
-        subtasksStatus: [],
+        // ✅ CORREÇÃO: Usa o checklist do form se existir, senão array vazio
+        subtasksStatus: osData.subtasksStatus || [], 
         executionHistory: [],
         assistantId: osData.assistantId || '',
         subPlantId: osData.subPlantId || '',
         inverterId: osData.inverterId || '',
       };
-
+      
       try {
         const res = await api('/api/os', { method: 'POST', body: JSON.stringify(payload) });
         if (!res.ok) throw new Error('Erro ao criar OS');
-
         let saved = (await res.json()) as OS;
         saved = mergeOSData(saved, payload);
-
         setOsList((prev) => [saved, ...prev]);
-
         if (saved.technicianId) pushNotification(saved.technicianId, `Nova OS atribuída: ${saved.title}`);
         if (saved.assistantId) pushNotification(saved.assistantId, `Você foi definido como Auxiliar na OS: ${saved.title}`);
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [api, pingBackend, pushNotification, setOsList]
+      } catch (e) { console.error(e); }
+    }, [api, pingBackend, pushNotification, setOsList]
   );
 
-  const addOSBatch = useCallback(
-    async (osDataList: any[]) => {
+  const addOSBatch = useCallback(async (osDataList: any[]) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const now = new Date().toISOString();
-
-      const nextIdNumber =
-        (osListRef.current.length > 0
+      const nextIdNumber = (osListRef.current.length > 0
           ? Math.max(...osListRef.current.map((os) => parseInt((os.id || '').replace(/\D/g, ''), 10) || 0))
           : 0) + 1;
-
       const batchPayload = osDataList.map((osData, index) => {
         const newId = `OS${String(nextIdNumber + index).padStart(4, '0')}`;
         return {
@@ -754,18 +594,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           updatedAt: now,
           logs: [],
           imageAttachments: [],
-          subtasksStatus: [],
+          // ✅ CORREÇÃO TAMBÉM NO BATCH
+          subtasksStatus: osData.subtasksStatus || [],
           executionHistory: [],
           assistantId: osData.assistantId || '',
         };
       });
-
       try {
         const res = await api('/api/os/batch', { method: 'POST', body: JSON.stringify(batchPayload) });
         if (!res.ok) throw new Error('Erro ao criar lote');
-
         await reloadFromAPI();
-
         batchPayload.forEach((os: any) => {
           if (os.technicianId) pushNotification(os.technicianId, `Nova OS atribuída: ${os.title}`);
         });
@@ -773,285 +611,125 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.error('Erro Batch:', e);
         alert('Erro ao criar lote de OS.');
       }
-    },
-    [api, pingBackend, pushNotification, reloadFromAPI]
+    }, [api, pingBackend, pushNotification, reloadFromAPI]
   );
 
-  const updateOS = useCallback(
-    async (updatedOS: OS) => {
+  const updateOS = useCallback(async (updatedOS: OS) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const oldOS = osListRef.current.find((o) => o.id === updatedOS.id);
       const hasTechChanged = !!oldOS && oldOS.technicianId !== updatedOS.technicianId;
       const hasAssistantChanged = !!oldOS && oldOS.assistantId !== updatedOS.assistantId;
-
       const res = await api(`/api/os/${updatedOS.id}`, { method: 'PUT', body: JSON.stringify(updatedOS) });
       if (!res.ok) throw new Error('Erro ao atualizar OS');
-
       let saved = (await res.json()) as OS;
       saved = mergeOSData(saved, updatedOS);
-
       setOsList((prev) => prev.map((os) => (os.id === saved.id ? saved : os)));
-
       if (hasTechChanged && saved.technicianId) pushNotification(saved.technicianId, `Você foi atribuído à OS: ${saved.title}`);
       if (hasAssistantChanged && saved.assistantId) pushNotification(saved.assistantId, `Você foi definido como Auxiliar na OS: ${saved.title}`);
-    },
-    [api, pingBackend, pushNotification, setOsList]
+    }, [api, pingBackend, pushNotification, setOsList]
   );
 
-  // ✅ patchOS corrigido: atualiza local sempre, e só faz PUT se backend reachable (ping ok)
-  const patchOS = useCallback(
-    async (osId: string, updates: Partial<OS>) => {
+  const patchOS = useCallback(async (osId: string, updates: Partial<OS>) => {
       const updatedAt = new Date().toISOString();
-
-      // 1) Atualiza local imediatamente (UX)
-      setOsList((prev) =>
-        prev.map((os) => (os.id === osId ? { ...os, ...updates, updatedAt } : os))
-      );
-
-      // 2) Só tenta bater no backend se estiver realmente reachable
+      setOsList((prev) => prev.map((os) => (os.id === osId ? { ...os, ...updates, updatedAt } : os)));
       const ok = await pingBackend(false);
       if (!ok) {
-        console.warn(`⚠️ patchOS: pulando PUT (backend offline/unreachable). osId=${osId}`);
+        console.warn(`⚠️ patchOS: pulando PUT (backend offline). osId=${osId}`);
         return;
       }
-
       try {
         const currentOS = osListRef.current.find((o) => o.id === osId);
         if (!currentOS) return;
-
         const mergedOS = { ...currentOS, ...updates, updatedAt };
-
-        await api(`/api/os/${osId}`, {
-          method: 'PUT',
-          body: JSON.stringify(mergedOS),
-        });
-      } catch (e) {
-        console.error('Erro patchOS', e);
-      }
-    },
-    [api, pingBackend, setOsList]
+        await api(`/api/os/${osId}`, { method: 'PUT', body: JSON.stringify(mergedOS) });
+      } catch (e) { console.error('Erro patchOS', e); }
+    }, [api, pingBackend, setOsList]
   );
 
-  const deleteOSBatch = useCallback(
-    async (ids: string[]) => {
+  const deleteOSBatch = useCallback(async (ids: string[]) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       await api('/api/os/batch', { method: 'DELETE', body: JSON.stringify(ids) });
       setOsList((prev) => prev.filter((os) => !ids.includes(os.id)));
-    },
-    [api, pingBackend, setOsList]
+    }, [api, pingBackend, setOsList]
   );
 
-  const addOSLog = useCallback(
-    (osId: string, log: Omit<OSLog, 'id' | 'timestamp'>) => {
-      const newLog: OSLog = {
-        ...(log as AnyRecord),
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-      } as OSLog;
-
-      setOsList((prev) =>
-        prev.map((os) => (os.id === osId ? { ...os, logs: [newLog, ...(os.logs || [])] } : os))
-      );
-    },
-    [setOsList]
+  const addOSLog = useCallback((osId: string, log: Omit<OSLog, 'id' | 'timestamp'>) => {
+      const newLog: OSLog = { ...(log as AnyRecord), id: `log-${Date.now()}`, timestamp: new Date().toISOString() } as OSLog;
+      setOsList((prev) => prev.map((os) => (os.id === osId ? { ...os, logs: [newLog, ...(os.logs || [])] } : os)));
+    }, [setOsList]
   );
 
-  const addOSAttachment = useCallback(
-    async (osId: string, att: Omit<ImageAttachment, 'id' | 'uploadedAt'>) => {
-      // Se backend não está reachable, força erro para o Modal enfileirar offline
+  const addOSAttachment = useCallback(async (osId: string, att: Omit<ImageAttachment, 'id' | 'uploadedAt'>) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
-      const newAtt: ImageAttachment = {
-        ...(att as AnyRecord),
-        id: `img-${Date.now()}`,
-        uploadedAt: new Date().toISOString(),
-      } as ImageAttachment;
-
-      // Busca lista atual no backend (evita conflito e garante OS completa)
+      const newAtt: ImageAttachment = { ...(att as AnyRecord), id: `img-${Date.now()}`, uploadedAt: new Date().toISOString() } as ImageAttachment;
       const freshListRes = await api('/api/os');
       if (!freshListRes.ok) throw new Error('Falha ao buscar OS list');
-
       const freshList = (await freshListRes.json()) as OS[];
       const currentOS = freshList.find((o) => o.id === osId);
       if (!currentOS) throw new Error('OS não encontrada no backend');
-
-      const payload = {
-        ...currentOS,
-        imageAttachments: [newAtt, ...(currentOS.imageAttachments || [])],
-        updatedAt: new Date().toISOString(),
-      };
-
+      const payload = { ...currentOS, imageAttachments: [newAtt, ...(currentOS.imageAttachments || [])], updatedAt: new Date().toISOString() };
       const res = await api(`/api/os/${osId}`, { method: 'PUT', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Falha no upload');
-
       const savedOS = (await res.json()) as OS;
       setOsList((prev) => prev.map((os) => (os.id === osId ? savedOS : os)));
-    },
-    [api, pingBackend, setOsList]
+    }, [api, pingBackend, setOsList]
   );
 
-  const uploadOSAttachments = useCallback(
-    async (osId: string, files: File[], caption: string) => {
+  const uploadOSAttachments = useCallback(async (osId: string, files: File[], caption: string) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
       const fd = new FormData();
       for (const f of files) fd.append('files', f, f.name);
       fd.append('caption', caption || 'Foto Geral');
-
       const token = localStorage.getItem('token');
       let userId = '';
       try {
         const u = localStorage.getItem('currentUser');
         if (u) userId = JSON.parse(u).id;
       } catch {}
-
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        'x-user-id': userId || '',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-
+      const headers: Record<string, string> = { Accept: 'application/json', 'x-user-id': userId || '', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
       const url = `${API_BASE}/api/os/${osId}/attachments`;
       const res = await fetch(url, { method: 'POST', headers, body: fd });
-
       if (!res.ok) throw new Error(await res.text());
-
       const savedOS = (await res.json()) as OS;
       setOsList((prev) => prev.map((o) => (o.id === osId ? savedOS : o)));
-    },
-    [pingBackend, setOsList]
+    }, [pingBackend, setOsList]
   );
 
-  const deleteOSAttachment = useCallback(
-    async (osId: string, attId: string) => {
+  const deleteOSAttachment = useCallback(async (osId: string, attId: string) => {
       const ok = await pingBackend(false);
       if (!ok) throw new Error('Backend offline/unreachable');
-
-      // Remove local primeiro
-      setOsList((prev) =>
-        prev.map((os) =>
-          os.id === osId ? { ...os, imageAttachments: (os.imageAttachments || []).filter((a) => a.id !== attId) } : os
-        )
-      );
-
-      // Atualiza no backend
+      setOsList((prev) => prev.map((os) => os.id === osId ? { ...os, imageAttachments: (os.imageAttachments || []).filter((a) => a.id !== attId) } : os));
       const currentOS = osListRef.current.find((o) => o.id === osId);
       if (!currentOS) return;
-
       const newAttachments = (currentOS.imageAttachments || []).filter((a) => a.id !== attId);
-
-      await api(`/api/os/${osId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ ...currentOS, imageAttachments: newAttachments }),
-      });
-    },
-    [api, pingBackend, setOsList]
+      await api(`/api/os/${osId}`, { method: 'PUT', body: JSON.stringify({ ...currentOS, imageAttachments: newAttachments }) });
+    }, [api, pingBackend, setOsList]
   );
 
-  const markNotificationAsRead = useCallback(
-    (id: string) => {
+  const markNotificationAsRead = useCallback((id: string) => {
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-
-      // Tenta backend, mas não falha se offline
       pingBackend(false).then((ok) => {
         if (!ok) return;
         api(`/api/notifications/${id}/read`, { method: 'PUT' }).catch((e) => console.error(e));
       });
-    },
-    [api, pingBackend, setNotifications]
+    }, [api, pingBackend, setNotifications]
   );
 
-  const value = useMemo<DataContextType>(
-    () => ({
-      users,
-      plants,
-      osList,
-      notifications,
-      taskTemplates,
-      maintenancePlans,
-
-      setAuthHeaders,
-
-      reloadFromAPI,
-      clearData,
-      loadUserData,
-
-      addUser,
-      updateUser,
-      deleteUser,
-
-      addPlant,
-      updatePlant,
-      deletePlant,
-
-      addOS,
-      addOSBatch,
-      updateOS,
-      patchOS,
-      deleteOSBatch,
-
-      addOSLog,
-      addOSAttachment,
-      uploadOSAttachments,
-      deleteOSAttachment,
-
-      markNotificationAsRead,
-      filterOSForUser,
-
-      fetchTaskTemplates,
-      fetchPlantPlan,
-      initializePlantPlan,
-      updatePlantTask,
-      createPlantTask,
-      deletePlantTask,
-
-      addTemplate,
-      updateTemplate,
-      deleteTemplate,
-    }),
-    [
-      users,
-      plants,
-      osList,
-      notifications,
-      taskTemplates,
-      maintenancePlans,
-      setAuthHeaders,
-      reloadFromAPI,
-      clearData,
-      loadUserData,
-      addUser,
-      updateUser,
-      deleteUser,
-      addPlant,
-      updatePlant,
-      deletePlant,
-      addOS,
-      addOSBatch,
-      updateOS,
-      patchOS,
-      deleteOSBatch,
-      addOSLog,
-      addOSAttachment,
-      deleteOSAttachment,
-      markNotificationAsRead,
-      filterOSForUser,
-      fetchTaskTemplates,
-      fetchPlantPlan,
-      initializePlantPlan,
-      updatePlantTask,
-      createPlantTask,
-      deletePlantTask,
-      addTemplate,
-      updateTemplate,
-      deleteTemplate,
-    ]
+  const value = useMemo<DataContextType>(() => ({
+      users, plants, osList, notifications, taskTemplates, maintenancePlans,
+      setAuthHeaders, reloadFromAPI, clearData, loadUserData,
+      addUser, updateUser, deleteUser,
+      addPlant, updatePlant, deletePlant,
+      addOS, addOSBatch, updateOS, patchOS, deleteOSBatch,
+      addOSLog, addOSAttachment, uploadOSAttachments, deleteOSAttachment,
+      markNotificationAsRead, filterOSForUser,
+      fetchTaskTemplates, fetchPlantPlan, initializePlantPlan, updatePlantTask, createPlantTask, deletePlantTask,
+      addTemplate, updateTemplate, deleteTemplate,
+    }), [users, plants, osList, notifications, taskTemplates, maintenancePlans, setAuthHeaders, reloadFromAPI, clearData, loadUserData, addUser, updateUser, deleteUser, addPlant, updatePlant, deletePlant, addOS, addOSBatch, updateOS, patchOS, deleteOSBatch, addOSLog, addOSAttachment, deleteOSAttachment, markNotificationAsRead, filterOSForUser, fetchTaskTemplates, fetchPlantPlan, initializePlantPlan, updatePlantTask, createPlantTask, deletePlantTask, addTemplate, updateTemplate, deleteTemplate]
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

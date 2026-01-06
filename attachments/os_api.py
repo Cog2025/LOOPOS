@@ -1,6 +1,6 @@
 # File: attachments/os_api.py
-from fastapi import APIRouter, HTTPException, Depends, Body, Header, UploadFile, File, Form
-from pydantic import BaseModel, field_validator
+from fastapi import APIRouter, HTTPException, Depends, Body, Header, UploadFile, File, Form, Query
+from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -12,6 +12,13 @@ import os
 import shutil
 from pathlib import Path
 
+# --- CONFIGURAÇÃO DE DIRETÓRIOS ---
+# Usa os.getcwd() para garantir que pegamos a pasta onde o script 'run.py' foi executado
+BASE_DIR = Path(os.getcwd()) 
+ATTACHMENTS_DIR = BASE_DIR / "images"
+ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+print(f"📸 [INIT API] Diretório base de imagens: {ATTACHMENTS_DIR}")
 
 # --- MODELO DE DADOS ---
 class OSModel(BaseModel):
@@ -43,251 +50,241 @@ class OSModel(BaseModel):
     isInReview: bool = False
     
     currentExecutorId: Optional[str] = None
-
-    subPlantId: Optional[str] = None
-    inverterId: Optional[str] = None
+    
+    maintenancePlanId: Optional[str] = None
     classification1: Optional[str] = None
     classification2: Optional[str] = None
     estimatedDuration: Optional[int] = 0
     plannedDowntime: Optional[int] = 0
 
-    @field_validator('assets', 'logs', 'imageAttachments', 'subtasksStatus', 'executionHistory', mode='before')
-    @classmethod
-    def none_to_list(cls, v):
-        return v or []
+router = APIRouter()
 
-    class Config:
-        from_attributes = True
+# --- FUNÇÕES AUXILIARES ---
 
-router = APIRouter(tags=["os"])
+def save_base64_image(base64_str: str, filename: str, os_id: str) -> str:
+    """
+    Decodifica Base64 e salva dentro da pasta específica da OS (ex: images/OS0002/arquivo.jpg)
+    """
+    try:
+        if "base64," in base64_str:
+            base64_str = base64_str.split("base64,")[1]
+        
+        image_data = base64.b64decode(base64_str)
+        
+        # Cria pasta específica da OS
+        os_folder = ATTACHMENTS_DIR / os_id
+        os_folder.mkdir(parents=True, exist_ok=True)
+        
+        safe_filename = f"{uuid4()}_{filename.replace(' ', '_')}"
+        file_path = os_folder / safe_filename
+        
+        print(f"💾 [DEBUG SAVE] Salvando em: {file_path}")
+        
+        with open(file_path, "wb") as f:
+            f.write(image_data)
+            
+        # Retorna URL pública correta
+        return f"/attachments/images/{os_id}/{safe_filename}"
 
-# ✅ HELPER CORRIGIDO: Caminho absoluto simples
-def get_images_dir(os_id: str):
-    # Pega o diretório onde este arquivo (os_api.py) está.
-    # Ex: C:\Users\...\LOOPOS\attachments
-    BASE_DIR = Path(__file__).resolve().parent
-    
-    # Cria o caminho: ...\attachments\images\OS0001
-    target = BASE_DIR / "images" / os_id
-    return str(target)
+    except Exception as e:
+        print(f"❌ [ERRO] Falha ao salvar base64: {e}")
+        return ""
 
-# --- LÓGICA DE SALVAMENTO ---
 def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     processed = []
-    target_dir = get_images_dir(os_id)
-    
-    if not os.path.exists(target_dir):
-        try:
-            os.makedirs(target_dir, exist_ok=True)
-        except Exception as e:
-            print(f"❌ [ERRO] Falha ao criar pasta {target_dir}: {e}")
-
     for att in attachments:
         url = att.get("url", "")
-        # Se for imagem nova (Base64)
-        if url and url.startswith("data:image"):
-            try:
-                header, encoded = url.split(",", 1)
-                file_ext = header.split(";")[0].split("/")[1]
-                
-                original_name = att.get("fileName") or f"img_{len(processed)}.{file_ext}"
-                # Limpa nome do arquivo
-                safe_name = "".join([c for c in original_name if c.isalnum() or c in (' ', '.', '_', '-')]).strip()
-                filename = safe_name or f"image_{len(processed)}.{file_ext}"
-                
-                file_path = os.path.join(target_dir, filename)
-                
-                with open(file_path, "wb") as f:
-                    f.write(base64.b64decode(encoded))
-                
-                # ✅ URL Relativa correta para o frontend
-                att["url"] = f"/attachments/images/{os_id}/{filename}"
-                print(f"✅ [UPLOAD] Salvo em: {file_path}")
-                
-            except Exception as e:
-                print(f"❌ [ERRO] Falha ao salvar arquivo: {e}")
-        
-        processed.append(att)
+        # Se for Base64 (vindo do App Offline), salva no disco
+        if url.startswith("data:"):
+            filename = att.get("fileName", f"upload_{int(datetime.now().timestamp())}.jpg")
+            # 🔥 Passamos o os_id para criar a subpasta
+            new_url = save_base64_image(url, filename, os_id)
+            if new_url:
+                att["url"] = new_url
+                processed.append(att)
+        else:
+            processed.append(att)
     return processed
 
-def cleanup_deleted_files(os_id: str, old_attachments: List[Dict], new_attachments: List[Dict]):
-    try:
-        target_dir = get_images_dir(os_id)
-        if not os.path.exists(target_dir):
-            return
-
-        kept_files = set()
-        for att in new_attachments:
-            url = att.get("url", "")
-            if f"/attachments/images/{os_id}/" in url:
-                filename = url.split('/')[-1]
-                kept_files.add(filename)
-
-        if os.path.exists(target_dir):
-            physical_files = os.listdir(target_dir)
-            for filename in physical_files:
-                if filename not in kept_files:
-                    file_path = os.path.join(target_dir, filename)
-                    try:
+def cleanup_deleted_files(os_id: str, old_list: List[Dict], new_list: List[Dict]):
+    old_urls = {a.get("url") for a in old_list if a.get("url") and not a.get("url").startswith("data:")}
+    new_urls = {a.get("url") for a in new_list if a.get("url")}
+    deleted_urls = old_urls - new_urls
+    
+    for url in deleted_urls:
+        try:
+            # A URL é /attachments/images/OS0002/arquivo.jpg
+            # Precisamos converter para caminho físico
+            parts = url.split("/")
+            if len(parts) >= 4:
+                filename = parts[-1]
+                folder_os = parts[-2] # Deve ser o ID da OS
+                
+                # Garante que só apaga se estiver dentro da pasta da OS certa
+                if folder_os == os_id:
+                    file_path = ATTACHMENTS_DIR / os_id / filename
+                    if file_path.exists():
                         os.remove(file_path)
-                    except: pass
-    except: pass
+                        print(f"🗑️ Arquivo deletado: {file_path}")
+        except Exception as e:
+            print(f"⚠️ Erro ao deletar arquivo {url}: {e}")
 
-# --- PERMISSÕES ---
-def verify_creation_permission(user: models.User, plant_id: str):
-    ALLOWED_ROLES = ["Admin", "Operador", "Supervisor", "Coordenador"]
-    if user.role not in ALLOWED_ROLES:
-        raise HTTPException(403, f"Acesso Negado: Perfil '{user.role}' não pode criar OS.")
-    return True
+# --- ROTAS DA API ---
 
-
-def _safe_filename(name: str) -> str:
-    name = (name or "").strip()
-    keep = []
-    for c in name:
-        if c.isalnum() or c in (" ", ".", "_", "-"):
-            keep.append(c)
-    out = "".join(keep).strip().replace(" ", "_")
-    return out or f"image_{uuid4().hex}.jpg"
-
-
-@router.post("/api/os/{os_id}/attachments", response_model=OSModel)
-def upload_os_attachments(
-    os_id: str,
-    files: List[UploadFile] = File(...),
-    caption: str = Form("Foto Geral"),
-    x_user_id: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
+@router.get("/api/os")
+def list_os(
+    x_user_id: Optional[str] = Header(None), 
+    _ping: Optional[str] = Query(None), 
+    db: Session = Depends(get_db)
 ):
-    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os:
-        raise HTTPException(404, "OS não encontrada")
-
-    # (Opcional) pega nome do usuário
-    user_name = None
-    if x_user_id:
-        user = db.query(models.User).filter(models.User.id == x_user_id).first()
-        user_name = user.name if user else None
-
-    target_dir = get_images_dir(os_id)
-    os.makedirs(target_dir, exist_ok=True)
-
-    current = db_os.imageAttachments or []
-    if not isinstance(current, list):
-        current = []
-
-    now = datetime.now(timezone.utc).isoformat()
-    new_items = []
-
-    for f in files:
-        original = _safe_filename(f.filename)
-        unique = f"{uuid4().hex}_{original}"
-        file_path = os.path.join(target_dir, unique)
-
-        with open(file_path, "wb") as out:
-            shutil.copyfileobj(f.file, out)
-
-        new_items.append(
-            {
-                "id": f"img-{uuid4().hex}",
-                "url": f"/attachments/images/{os_id}/{unique}",
-                "fileName": original,
-                "caption": caption,
-                "uploadedBy": user_name or "Sistema",
-                "uploadedAt": now,
-            }
-        )
-
-    db_os.imageAttachments = new_items + current
-    db_os.updatedAt = now
-    db.commit()
-    db.refresh(db_os)
-    return db_os
-
-
-# --- ROTAS EXPLÍCITAS /api/os ---
-
-@router.get("/api/os", response_model=List[OSModel])
-def list_os(x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    if _ping: return [] 
     query = db.query(models.OS)
-    if x_user_id:
-        user = db.query(models.User).filter(models.User.id == x_user_id).first()
-        if user and user.role not in ["Admin", "Operador"]:
-            user_plant_ids = user.plantIds or []
-            if not user_plant_ids: return []
-            query = query.filter(models.OS.plantId.in_(user_plant_ids))
     return query.all()
 
-@router.get("/api/os/{os_id}", response_model=OSModel)
+@router.get("/api/os/{os_id}")
 def get_os(os_id: str, db: Session = Depends(get_db)):
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os: raise HTTPException(404, "OS não encontrada")
+    if not db_os:
+        raise HTTPException(status_code=404, detail="OS not found")
     return db_os
 
-def _get_next_id(db: Session) -> str:
-    last_os = db.query(models.OS).filter(models.OS.id.like("OS%")).order_by(models.OS.id.desc()).first()
-    next_num = 1
-    if last_os:
-        try: next_num = int(last_os.id[2:]) + 1
-        except: pass
-    return f"OS{str(next_num).zfill(4)}"
-
-@router.post("/api/os", response_model=OSModel)
-def create_os(payload: OSModel, x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    if not x_user_id: raise HTTPException(401, "Usuário não identificado.")
-    user = db.query(models.User).filter(models.User.id == x_user_id).first()
-    if not user: raise HTTPException(401, "Usuário não encontrado.")
-
-    verify_creation_permission(user, payload.plantId)
-
-    if not payload.id or db.query(models.OS).filter(models.OS.id == payload.id).first():
-        payload.id = _get_next_id(db)
-        if " - " not in payload.title:
-             payload.title = f"{payload.id} - {payload.activity}"
-    
-    db_os = models.OS(**payload.dict())
+@router.post("/api/os")
+def create_os(os_data: OSModel, db: Session = Depends(get_db)):
+    if os_data.imageAttachments:
+        os_data.imageAttachments = process_attachments(os_data.id, os_data.imageAttachments)
+    db_os = models.OS(**os_data.dict())
     db.add(db_os)
     db.commit()
     db.refresh(db_os)
     return db_os
 
-@router.post("/api/os/batch", response_model=List[OSModel])
-def create_os_batch(payloads: List[OSModel], x_user_id: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    if not x_user_id: raise HTTPException(401, "Usuário não identificado")
-    user = db.query(models.User).filter(models.User.id == x_user_id).first()
-    
+@router.post("/api/os/batch")
+def create_os_batch(os_list: List[OSModel], db: Session = Depends(get_db)):
     created = []
-    next_num = 1 
-    last_os = db.query(models.OS).filter(models.OS.id.like("OS%")).order_by(models.OS.id.desc()).first()
-    if last_os:
-        try: next_num = int(last_os.id[2:]) + 1
-        except: pass
-
-    for p in payloads:
-        new_id = f"OS{str(next_num).zfill(4)}"
-        next_num += 1
-        p.id = new_id
-        p.title = f"{new_id} - {p.activity}"
-        db_os = models.OS(**p.dict())
+    for item in os_list:
+        if item.imageAttachments:
+            item.imageAttachments = process_attachments(item.id, item.imageAttachments)
+        db_os = models.OS(**item.dict())
         db.add(db_os)
         created.append(db_os)
-        
     db.commit()
-    for c in created: db.refresh(c)
     return created
+
+@router.put("/api/os/{os_id}")
+def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db)):
+    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
+    if not db_os: raise HTTPException(404, "OS not found")
+    
+    if payload.imageAttachments is not None:
+        old_attachments = db_os.imageAttachments or []
+        # Processa salvando na pasta correta (OS_ID)
+        final_attachments = process_attachments(os_id, payload.imageAttachments)
+        cleanup_deleted_files(os_id, old_attachments, final_attachments)
+        db_os.imageAttachments = final_attachments
+
+    update_data = payload.dict(exclude={'imageAttachments'}, exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_os, key, value)
+    
+    if db_os.isInReview and db_os.status != "Em Revisão":
+         db_os.status = "Em Revisão"
+
+    db.commit()
+    db.refresh(db_os)
+    return db_os
+
+@router.delete("/api/os/batch")
+def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db)):
+    # Limpa arquivos físicos antes de deletar do banco
+    oss = db.query(models.OS).filter(models.OS.id.in_(ids)).all()
+    for os_obj in oss:
+        if os_obj.imageAttachments:
+            cleanup_deleted_files(os_obj.id, os_obj.imageAttachments, [])
+            # Tenta remover a pasta da OS também se estiver vazia
+            try:
+                shutil.rmtree(ATTACHMENTS_DIR / os_obj.id, ignore_errors=True)
+            except: pass
+
+    db.query(models.OS).filter(models.OS.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted_count": len(ids)}
+
+@router.delete("/api/os/{os_id}")
+def delete_os(os_id: str, db: Session = Depends(get_db)):
+    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
+    if not db_os: return {"ok": True}
+    
+    if db_os.imageAttachments:
+        cleanup_deleted_files(os_id, db_os.imageAttachments, [])
+        # Remove a pasta da OS
+        try:
+            shutil.rmtree(ATTACHMENTS_DIR / os_id, ignore_errors=True)
+        except: pass
+        
+    db.delete(db_os)
+    db.commit()
+    return {"ok": True}
+
+@router.post("/api/os/{os_id}/attachments")
+def upload_attachments(
+    os_id: str,
+    files: List[UploadFile] = File(...),
+    caption: str = Form("Foto Geral"),
+    x_user_id: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    print(f"🚀 [DEBUG UPLOAD] Recebendo {len(files)} arquivos para OS: {os_id}")
+    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
+    if not db_os: raise HTTPException(404, "OS not found")
+
+    user = db.query(models.User).filter(models.User.id == x_user_id).first()
+    uploader_name = user.name if user else "Desconhecido"
+
+    # 🔥 Cria pasta da OS se não existir
+    os_folder = ATTACHMENTS_DIR / os_id
+    os_folder.mkdir(parents=True, exist_ok=True)
+
+    new_attachments = []
+    
+    for file in files:
+        safe_filename = f"{uuid4()}_{file.filename.replace(' ', '_')}"
+        file_path = os_folder / safe_filename
+        
+        print(f"💾 [DEBUG UPLOAD] Salvando físico em: {file_path}")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        new_attachments.append({
+            "id": f"img-{int(datetime.now().timestamp()*1000)}",
+            # A URL deve refletir a subpasta da OS
+            "url": f"/attachments/images/{os_id}/{safe_filename}",
+            "fileName": file.filename,
+            "caption": caption,
+            "uploadedBy": uploader_name,
+            "uploadedAt": datetime.now().isoformat()
+        })
+
+    current_list = list(db_os.imageAttachments or [])
+    updated_list = new_attachments + current_list
+    db_os.imageAttachments = updated_list
+    db_os.updatedAt = datetime.now().isoformat()
+    
+    db.commit()
+    db.refresh(db_os)
+    return db_os
 
 @router.post("/api/os/{os_id}/start")
 def start_execution(os_id: str, x_user_id: str = Header(...), db: Session = Depends(get_db)):
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os: raise HTTPException(404, "OS não encontrada")
+    if not db_os: raise HTTPException(404, "OS not found")
     
     if db_os.currentExecutorId and db_os.currentExecutorId != x_user_id:
-        raise HTTPException(409, detail=f"Bloqueado: Esta OS está sendo executada por outro usuário.")
-
-    now = datetime.now(timezone.utc).isoformat()
+        raise HTTPException(400, "OS bloqueada por outro usuário")
+        
     db_os.currentExecutorId = x_user_id
-    db_os.executionStart = now
+    db_os.executionStart = datetime.now(timezone.utc).isoformat()
     db_os.status = "Em Progresso"
+    db_os.updatedAt = datetime.now().isoformat()
     
     db.commit()
     db.refresh(db_os)
@@ -305,14 +302,12 @@ def pause_execution(
     
     user = db.query(models.User).filter(models.User.id == x_user_id).first()
     
-    # 1. Recupera timestamps
     client_end = payload.get("clientEndTime")
     now_dt = datetime.fromisoformat(client_end.replace('Z', '+00:00')) if client_end else datetime.now(timezone.utc)
     
     start_iso = db_os.executionStart
     if not start_iso: start_iso = payload.get("clientStartTime")
     
-    # 2. Calcula duração
     duration = 0
     if payload.get("durationSeconds") is not None:
         duration = int(payload.get("durationSeconds"))
@@ -322,11 +317,9 @@ def pause_execution(
             duration = int((now_dt - start_dt).total_seconds())
         except: duration = 0
     
-    # 3. Lógica de Itens Concluídos (CORRIGIDA)
     new_subtasks = payload.get("subtasksStatus", [])
     completed_now = [] 
     
-    # Mapeia estado anterior para saber o que mudou
     old_subtasks = db_os.subtasksStatus or []
     if not isinstance(old_subtasks, list): old_subtasks = []
     
@@ -335,14 +328,12 @@ def pause_execution(
         if isinstance(st, dict):
             old_map[st.get('id')] = st.get('done', False)
             
-    # Compara: Se está feito AGORA, mas não estava ANTES -> Foi feito nesta sessão
     for st in new_subtasks:
         if isinstance(st, dict):
             st_id = st.get('id')
             is_done = st.get('done', False)
             was_done = old_map.get(st_id, False)
             if is_done and not was_done:
-                # Salva o texto da tarefa concluída
                 completed_now.append(st.get('text', f"Item {st_id}"))
     
     session_log = {
@@ -352,7 +343,7 @@ def pause_execution(
         "startTime": start_iso or now_dt.isoformat(),
         "endTime": now_dt.isoformat(),
         "durationSeconds": duration,
-        "completedSubtasks": completed_now, # ✅ Agora salva a lista real
+        "completedSubtasks": completed_now,
         "syncedFromOffline": bool(client_end)
     }
     
@@ -373,43 +364,3 @@ def pause_execution(
     db.commit()
     db.refresh(db_os)
     return db_os
-
-@router.put("/api/os/{os_id}", response_model=OSModel)
-def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db)):
-    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os: raise HTTPException(404, "OS not found")
-    
-    if payload.imageAttachments is not None:
-        old_attachments = db_os.imageAttachments or []
-        final_attachments = process_attachments(os_id, payload.imageAttachments)
-        cleanup_deleted_files(os_id, old_attachments, final_attachments)
-        db_os.imageAttachments = final_attachments
-
-    update_data = payload.dict(exclude={'imageAttachments'}, exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_os, key, value)
-    
-    if db_os.isInReview and db_os.status != "Em Revisão":
-         db_os.status = "Em Revisão"
-
-    db.commit()
-    db.refresh(db_os)
-    return db_os
-
-@router.delete("/api/os/batch")
-def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db)):
-    db.query(models.OS).filter(models.OS.id.in_(ids)).delete(synchronize_session=False)
-    db.commit()
-    return {"deleted_count": len(ids)}
-
-@router.delete("/api/os/{os_id}")
-def delete_os(os_id: str, db: Session = Depends(get_db)):
-    db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
-    if not db_os: raise HTTPException(404, "OS not found")
-    try:
-        target_dir = get_images_dir(os_id)
-        if os.path.exists(target_dir): shutil.rmtree(target_dir)
-    except: pass
-    db.delete(db_os)
-    db.commit()
-    return {"ok": True}

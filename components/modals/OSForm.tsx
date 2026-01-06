@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { OS, OSStatus, Priority, Role } from '../../types';
 import Modal from './Modal';
 
-// --- SEARCHABLE SELECT (Com controle de foco externo) ---
+// --- SEARCHABLE SELECT ---
 interface Option { label: string; value: string; }
 interface SearchableSelectProps {
     options: Option[];
@@ -29,7 +29,6 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            // Se clicar fora E estiver aberto, fecha
             if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node) && isOpen) {
                 onClose();
             }
@@ -82,7 +81,7 @@ interface Props {
 }
 
 const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
-    const { addOS, updateOS, users, plants, maintenancePlans } = useData();
+    const { addOS, updateOS, users, plants, maintenancePlans, fetchPlantPlan } = useData();
     const { user } = useAuth();
 
     const [formData, setFormData] = useState<Partial<OS>>({
@@ -92,9 +91,8 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
     });
 
     const [selectedAssetCategory, setSelectedAssetCategory] = useState<string>('');
-    
-    // Controle de qual dropdown está aberto (para evitar sobreposição)
     const [activeField, setActiveField] = useState<string | null>(null);
+    
     const handleToggleDropdown = (fieldId: string) => setActiveField(prev => prev === fieldId ? null : fieldId);
     const closeDropdowns = () => setActiveField(null);
 
@@ -105,7 +103,6 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
                 setSelectedAssetCategory(initialData.assets[0]);
             }
         } else {
-            // Data local
             const today = new Date();
             const year = today.getFullYear();
             const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -113,6 +110,20 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
             setFormData(prev => ({ ...prev, startDate: `${year}-${month}-${day}` }));
         }
     }, [initialData]);
+
+    // Carrega planos ao selecionar Usina
+    useEffect(() => {
+        if (formData.plantId) {
+            fetchPlantPlan(formData.plantId);
+        }
+    }, [formData.plantId, fetchPlantPlan]);
+
+    const getPlantTasks = (plantId?: string): any[] => {
+        if (!plantId) return [];
+        const raw = maintenancePlans[plantId];
+        const list = raw as unknown as any[]; 
+        return Array.isArray(list) ? list : [];
+    };
 
     const plantOptions = useMemo(() => {
         let filtered = plants;
@@ -137,17 +148,18 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
     const assetOptions = useMemo(() => {
         if (!currentPlant) return [];
         const physicalAssets = currentPlant.assets || [];
-        const planCategories = (maintenancePlans[currentPlant.id] || []).map(p => p.asset_category);
+        const tasks = getPlantTasks(currentPlant.id);
+        const planCategories = tasks.map((p: any) => p.asset_category);
         const uniqueAssets = Array.from(new Set([...physicalAssets, ...planCategories])).sort();
         return uniqueAssets.map(a => ({ label: a, value: a }));
-    }, [currentPlant, maintenancePlans]);
+    }, [currentPlant, maintenancePlans]); 
 
     const taskOptions = useMemo(() => {
         if (!currentPlant || !selectedAssetCategory) return [];
-        const plans = maintenancePlans[currentPlant.id] || [];
-        return plans
-            .filter(p => p.asset_category === selectedAssetCategory)
-            .map(p => ({ label: p.title, value: p.title, fullPlan: p }));
+        const tasks = getPlantTasks(currentPlant.id);
+        return tasks
+            .filter((p: any) => p.asset_category === selectedAssetCategory)
+            .map((p: any) => ({ label: p.title, value: p.title, fullPlan: p }));
     }, [currentPlant, selectedAssetCategory, maintenancePlans]);
 
     const handleAssetChange = (asset: string) => {
@@ -164,12 +176,32 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
         if (selectedPlan?.criticality === 'Alta') autoPriority = Priority.HIGH;
         if (selectedPlan?.criticality === 'Urgente') autoPriority = Priority.URGENT;
 
+        // 🔥 CORREÇÃO CRÍTICA: Tratamento robusto de subtasks (JSON ou String)
+        let rawSubtasks = selectedPlan?.subtasks;
+        
+        // Se vier como string do banco, tenta parsear
+        if (typeof rawSubtasks === 'string') {
+            try { rawSubtasks = JSON.parse(rawSubtasks); } catch { rawSubtasks = []; }
+        }
+        
+        // Garante array
+        if (!Array.isArray(rawSubtasks)) rawSubtasks = [];
+
+        const formattedSubtasks = rawSubtasks.map((item: any, idx: number) => {
+            const textValue = typeof item === 'string' ? item : (item.text || 'Item sem descrição');
+            return { 
+                id: idx, 
+                text: textValue, 
+                done: false 
+            };
+        });
+
         setFormData(prev => ({
             ...prev,
             activity: taskTitle,
-            title: taskTitle, // Título Automático
-            subtasksStatus: selectedPlan?.subtasks?.map((text, id) => ({ id, text, done: false })) || [],
-            priority: autoPriority, // Prioridade Automática
+            title: taskTitle,
+            subtasksStatus: formattedSubtasks,
+            priority: autoPriority,
             classification1: selectedPlan?.classification1,
             classification2: selectedPlan?.classification2,
             estimatedDuration: selectedPlan?.estimated_duration_minutes ? selectedPlan.estimated_duration_minutes * 60 : 0,
@@ -196,8 +228,6 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
             <form onSubmit={handleSubmit} className="flex flex-col h-[80vh]">
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
                     
-                    {/* CAMPO DE TÍTULO REMOVIDO (É preenchido automaticamente pela Tarefa) */}
-
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Usina *</label>
@@ -253,13 +283,12 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
                             </select>
                         </div>
                         <div>
-                            {/* ✅ CRITICIDADE (READ-ONLY) */}
                             <label className={labelClass}>Criticidade</label>
                             <select 
                                 value={formData.priority} 
                                 onChange={e => setFormData({...formData, priority: e.target.value as any})} 
                                 className={`${inputClass} bg-gray-100 opacity-70 cursor-not-allowed`}
-                                disabled // Campo bloqueado
+                                disabled 
                             >
                                 {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
                             </select>
