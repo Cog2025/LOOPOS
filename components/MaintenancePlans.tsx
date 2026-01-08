@@ -9,8 +9,8 @@ import CustomInitializationModal from './modals/CustomInitializationModal';
 import { generateFullMaintenancePDF } from './utils/pdfGenerator';
 import { saveFile } from './utils/fileSaver';
 import { 
-    Download, ChevronDown, ChevronRight, AlertCircle, BookOpen, 
-    Settings, Plus, Trash2, Edit, Save, X 
+    Download, ChevronDown, ChevronUp, ChevronRight, AlertCircle, BookOpen, 
+    Settings, Plus, Trash2, Edit, Save, X, Filter 
 } from 'lucide-react';
 
 const MaintenancePlans: React.FC = () => {
@@ -27,6 +27,9 @@ const MaintenancePlans: React.FC = () => {
   const [showLibrary, setShowLibrary] = useState(false);
   const [showCustomWizard, setShowCustomWizard] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // ✅ NOVO: Estado para colapsar filtros no mobile
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   
   // Estado para controlar o disparo do download após atualização
   const [pendingLibraryDownload, setPendingLibraryDownload] = useState(false);
@@ -114,7 +117,6 @@ const MaintenancePlans: React.FC = () => {
     }
   };
 
-  // 1. Inicia o processo de download (Atualiza dados primeiro)
   const handleDownloadLibraryPDF = async () => {
     if (!canDownloadLibrary) return;
     setIsLoading(true);
@@ -123,7 +125,6 @@ const MaintenancePlans: React.FC = () => {
     setPendingLibraryDownload(true); 
   };
 
-  // 2. Executa o download real (Chamado pelo useEffect)
   const executeLibraryDownload = async () => {
     try {
         const doc = generateFullMaintenancePDF(
@@ -246,38 +247,58 @@ const MaintenancePlans: React.FC = () => {
         <div><h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2"><BookOpen className="text-blue-600" /> Planos de Manutenção</h1></div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-4 justify-between items-end bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 shrink-0 mb-6">
-        <div className="flex gap-4 flex-1 w-full md:w-auto">
-            <div className="w-1/2 md:w-64">
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cliente</label>
-                <div className="relative"><select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlantId(''); }} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none"><option value="">Selecione...</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
-            </div>
-            <div className="w-1/2 md:w-64">
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Usina</label>
-                <div className="relative"><select value={selectedPlantId} onChange={e => setSelectedPlantId(e.target.value)} disabled={!selectedClient} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none disabled:opacity-50"><option value="">Selecione...</option>{availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
-            </div>
-        </div>
+      <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 shrink-0 mb-6">
         
-        {/* BOTÕES DE AÇÃO */}
-        <div className="grid grid-cols-2 md:flex gap-2 w-full md:w-auto mt-4 md:mt-0">
-            <button onClick={handleDownloadPlantPDF} disabled={!selectedPlantId || planData.length === 0} className="col-span-1 px-3 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
-                <Download size={18} /> <span>Plano da Usina</span>
+        {/* CABEÇALHO COM BOTÃO TOGGLE (MOBILE) */}
+        <div className="flex justify-between items-center md:hidden mb-2">
+            <span className="font-bold text-gray-700 dark:text-gray-300">Seleção</span>
+            <button 
+                onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                className="flex items-center gap-1 text-sm bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded"
+            >
+                {isFiltersOpen ? 'Ocultar' : 'Mostrar'} 
+                {isFiltersOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
-            {canDownloadLibrary && (
-                <button onClick={handleDownloadLibraryPDF} disabled={isLoading} className="col-span-1 px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full disabled:opacity-50">
-                    {isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <Download size={18} />} <span>Plano Padrão</span>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4 justify-between items-end">
+            
+            {/* CONTAINER FILTROS (COLLAPSABLE NO MOBILE) */}
+            <div className={`
+                flex-col md:flex-row gap-4 flex-1 w-full md:w-auto
+                ${isFiltersOpen ? 'flex' : 'hidden'} md:flex
+            `}>
+                <div className="w-full md:w-64">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cliente</label>
+                    <div className="relative"><select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlantId(''); }} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none"><option value="">Selecione...</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
+                </div>
+                <div className="w-full md:w-64">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Usina</label>
+                    <div className="relative"><select value={selectedPlantId} onChange={e => setSelectedPlantId(e.target.value)} disabled={!selectedClient} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none disabled:opacity-50"><option value="">Selecione...</option>{availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
+                </div>
+            </div>
+            
+            {/* BOTÕES DE AÇÃO (SEMPRE VISÍVEIS OU ADAPTADOS) */}
+            <div className="grid grid-cols-2 md:flex gap-2 w-full md:w-auto mt-4 md:mt-0">
+                <button onClick={handleDownloadPlantPDF} disabled={!selectedPlantId || planData.length === 0} className="col-span-1 px-3 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
+                    <Download size={18} /> <span>Plano da Usina</span>
                 </button>
-            )}
-            {canManageLibrary && (
-                <button onClick={() => setShowLibrary(true)} className="col-span-1 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
-                    <BookOpen size={18} /> <span>Editar Padrão</span>
-                </button>
-            )}
-            {canImplementPlan && (
-                <button onClick={() => { if(confirm("Inicializar com Padrão Loop?")) initializePlantPlan(selectedPlantId, 'STANDARD'); }} disabled={!selectedPlantId} className="col-span-1 px-3 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
-                    <Settings size={18} /> <span>Inicializar</span>
-                </button>
-            )}
+                {canDownloadLibrary && (
+                    <button onClick={handleDownloadLibraryPDF} disabled={isLoading} className="col-span-1 px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full disabled:opacity-50">
+                        {isLoading ? <span className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"/> : <Download size={18} />} <span>Plano Padrão</span>
+                    </button>
+                )}
+                {canManageLibrary && (
+                    <button onClick={() => setShowLibrary(true)} className="col-span-1 px-3 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
+                        <BookOpen size={18} /> <span>Editar Padrão</span>
+                    </button>
+                )}
+                {canImplementPlan && (
+                    <button onClick={() => { if(confirm("Inicializar com Padrão Loop?")) initializePlantPlan(selectedPlantId, 'STANDARD'); }} disabled={!selectedPlantId} className="col-span-1 px-3 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 text-white rounded-lg font-bold shadow-sm flex flex-col md:flex-row items-center justify-center gap-1 text-xs md:text-sm text-center h-full">
+                        <Settings size={18} /> <span>Inicializar</span>
+                    </button>
+                )}
+            </div>
         </div>
       </div>
 
@@ -296,41 +317,25 @@ const MaintenancePlans: React.FC = () => {
                     const isAssetExpanded = expandedAssets.has(asset);
                     return (
                         <div key={asset} className="mb-4 border dark:border-gray-700 rounded-lg overflow-hidden shadow-sm">
-                            {/* CABEÇALHO DO ATIVO */}
                             <div className="flex items-center justify-between p-3 bg-gray-800 text-white cursor-pointer hover:bg-gray-700" onClick={() => toggleAsset(asset)}>
-                                <div className="flex items-center gap-3 flex-1 min-w-0"> {/* 🔥 flex-1 e min-w-0 para encolher texto */}
+                                <div className="flex items-center gap-3 flex-1 min-w-0">
                                     {isAssetExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                                     <h3 className="font-bold text-sm uppercase tracking-wide truncate">{asset}</h3>
-                                    
                                     {canEditImplemented && (
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); handleRenameAsset(asset); }}
-                                            className="p-1 text-gray-400 hover:text-white transition-colors hover:bg-gray-600 rounded shrink-0"
-                                            title="Renomear Ativo"
-                                        >
+                                        <button onClick={(e) => { e.stopPropagation(); handleRenameAsset(asset); }} className="p-1 text-gray-400 hover:text-white transition-colors hover:bg-gray-600 rounded shrink-0" title="Renomear Ativo">
                                             <Edit size={14} />
                                         </button>
                                     )}
-
                                     <span className="text-xs bg-gray-600 px-2 py-0.5 rounded-full font-medium shrink-0">
                                         {tasks.length}
                                     </span>
                                 </div>
-                                {/* BOTÕES DE AÇÃO DO ATIVO - Shrink-0 para não sumir */}
                                 {canEditImplemented && (
                                     <div className="flex items-center gap-2 ml-2 shrink-0">
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); handleAddTaskToAsset(asset); }} 
-                                            className="p-1.5 hover:bg-gray-600 rounded text-white"
-                                            title="Adicionar Tarefa"
-                                        >
+                                        <button onClick={(e) => { e.stopPropagation(); handleAddTaskToAsset(asset); }} className="p-1.5 hover:bg-gray-600 rounded text-white" title="Adicionar Tarefa">
                                             <Plus size={18} />
                                         </button>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} 
-                                            className="p-1.5 hover:bg-red-600 rounded text-red-200 hover:text-white transition-colors"
-                                            title="Excluir Ativo e Tarefas"
-                                        >
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteAsset(asset); }} className="p-1.5 hover:bg-red-600 rounded text-red-200 hover:text-white transition-colors" title="Excluir Ativo e Tarefas">
                                             <Trash2 size={18} />
                                         </button>
                                     </div>
@@ -357,22 +362,12 @@ const MaintenancePlans: React.FC = () => {
                                                     <button onClick={() => toggleTask(task.id)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">
                                                         {expandedTasks.has(task.id) ? 'Ocultar' : 'Checklist'}
                                                     </button>
-                                                    
-                                                    {/* 🔥 MUDANÇA AQUI: flex-col para empilhar verticalmente */}
                                                     {canEditImplemented && (
                                                         <div className="flex flex-col gap-2 border-l pl-2 shrink-0">
-                                                            <button 
-                                                                onClick={(e) => handleEditClick(e, task)} 
-                                                                className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"
-                                                                title="Editar Tarefa"
-                                                            >
+                                                            <button onClick={(e) => handleEditClick(e, task)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded" title="Editar Tarefa">
                                                                 <Edit size={18} />
                                                             </button>
-                                                            <button 
-                                                                onClick={(e) => handleDeleteTask(e, task.id)} 
-                                                                className="p-1.5 text-red-500 hover:bg-red-50 rounded"
-                                                                title="Excluir Tarefa"
-                                                            >
+                                                            <button onClick={(e) => handleDeleteTask(e, task.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Excluir Tarefa">
                                                                 <Trash2 size={18} />
                                                             </button>
                                                         </div>

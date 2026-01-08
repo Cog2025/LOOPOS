@@ -1,24 +1,18 @@
 // File: components/Calendar.tsx
-// Componente para exibir um calendário mensal com as OSs distribuídas por data
-
 import React, { useState, useMemo } from 'react';
+import { useOutletContext } from 'react-router-dom'; 
 import { OS, Priority, Role } from '../types'; 
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import Modal from './modals/Modal';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Download, FileText, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileText, Filter, ChevronDown, ChevronUp } from 'lucide-react'; // ✅ Ícones
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateOSReport } from './utils/pdfGenerator';
 import { saveFile } from './utils/fileSaver';
-import { Capacitor } from '@capacitor/core';
-
-interface CalendarProps {
-  osList: OS[];
-  onCardClick: (os: OS) => void;
-}
+import { DashboardContextType } from './Dashboard'; 
 
 interface DayInfo {
   date: Date;
@@ -26,12 +20,19 @@ interface DayInfo {
   dayNumber: number;
 }
 
-const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
-  const { plants, users, filterOSForUser } = useData();
+const Calendar: React.FC = () => {
+  const { filteredOSList: osList, openModal } = useOutletContext<DashboardContextType>();
+  
+  const onCardClick = (os: OS) => openModal('OS_DETAIL', { os });
+
+  const { plants, users } = useData();
   const { user } = useAuth();
 
   const [currentDate, setCurrentDate] = useState(new Date());
   
+  // ✅ NOVO: Estado para visibilidade dos filtros
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+
   // Filtros
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedPlant, setSelectedPlant] = useState('');
@@ -39,7 +40,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
   const [selectedAsset, setSelectedAsset] = useState('');
   const [selectedTechnician, setSelectedTechnician] = useState('');
 
-  // Relatório (Restaurado)
+  // Relatório
   const [reportStartDate, setReportStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [reportEndDate, setReportEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -48,7 +49,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
       isOpen: false, title: '', items: []
   });
 
-  // --- FILTROS DE SEGURANÇA (MANTIDOS) ---
   const availablePlants = useMemo(() => {
       const filtered = plants.filter(plant => {
           if (!user) return false;
@@ -68,7 +68,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
       }).sort((a,b) => a.name.localeCompare(b.name));
   }, [users, user]);
 
-  // Filtro de Clientes baseado nas usinas disponíveis
   const availableClients = useMemo(() => {
       const clients = new Set(availablePlants.map(p => p.client || 'Indefinido'));
       return Array.from(clients).sort();
@@ -83,7 +82,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     return Array.from(assetsSet).sort();
   }, [osList]);
 
-  // Helpers
   const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || id;
   const getUserName = (id: string) => users.find(u => u.id === id)?.name || 'N/A';
 
@@ -129,10 +127,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
         
         if (selectedClient && plant?.client !== selectedClient) return false;
         if (selectedPlant && os.plantId !== selectedPlant) return false;
-        
-        // Segurança: Bloqueia se a usina não estiver na lista permitida
         if (!availablePlants.find(p => p.id === os.plantId)) return false;
-
         if (selectedPriority && os.priority !== selectedPriority) return false;
         
         if (selectedAsset) {
@@ -167,7 +162,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
   const handlePrevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
   const handleNextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
 
-  // --- DOWNLOAD PDF RESTAURADO ---
   const handleDownloadReport = async (type: 'summary' | 'complete') => {
     const reportData = filteredOS.filter(os => {
       const osDate = new Date(os.startDate);
@@ -185,18 +179,14 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     if (type === 'complete') {
         setIsGeneratingPDF(true);
         try {
-            // Gera o PDF (false = não baixa automático)
             const doc = await generateOSReport(
                 reportData, 
                 "Relatório Completo de Manutenção",
                 { getPlantName, getUserName } as any,
                 false 
             );
-            
-            // Salva via Filesystem
             const pdfBase64 = doc.output('datauristring').split(',')[1];
             await saveFile(`Relatorio_Completo_${reportStartDate}.pdf`, pdfBase64, 'application/pdf');
-
         } catch (e) {
             console.error(e);
             alert("Erro ao gerar PDF.");
@@ -204,10 +194,8 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
             setIsGeneratingPDF(false);
         }
     } else {
-        // --- RELATÓRIO RESUMIDO ---
         try {
             const doc = new jsPDF();
-            // ... (código de geração do PDF resumido continua igual) ...
             doc.setFontSize(16);
             doc.text("Relatório Resumido de Manutenção", 14, 15);
             doc.setFontSize(10);
@@ -246,11 +234,8 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
                     6: { cellWidth: 20 }
                 }
             });
-            
-            // Salva via Filesystem
             const pdfBase64 = doc.output('datauristring').split(',')[1];
             await saveFile(`Resumo_${reportStartDate}.pdf`, pdfBase64, 'application/pdf');
-
         } catch (e) {
             console.error(e);
             alert("Erro ao gerar resumo.");
@@ -258,15 +243,32 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
     }
   };
 
-  const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1 px-2";
+  const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1 px-2 w-full lg:w-auto";
 
   return (
     <div className="h-full flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">
       
       {/* 1. BARRA DE FILTROS */}
-      <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm m-4 mb-2 flex flex-wrap gap-3 items-center justify-between">
-        <div className="flex flex-wrap gap-2 items-center">
-            <span className="text-sm font-bold text-gray-700 dark:text-gray-300 mr-2 flex items-center">
+      <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm m-4 mb-2">
+        {/* Toggle Mobile */}
+        <div className="flex justify-between items-center lg:hidden mb-2">
+            <span className="font-bold text-gray-700 dark:text-gray-300">Filtros</span>
+            <button 
+                onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                className="flex items-center gap-1 text-sm bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded"
+            >
+                {isFiltersOpen ? 'Ocultar' : 'Mostrar'} 
+                {isFiltersOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+        </div>
+
+        {/* Container dos Selects */}
+        <div className={`
+            flex flex-wrap gap-2 items-center
+            ${isFiltersOpen ? 'flex flex-col items-stretch' : 'hidden'} 
+            lg:flex lg:flex-row lg:items-center
+        `}>
+            <span className="hidden lg:flex text-sm font-bold text-gray-700 dark:text-gray-300 mr-2 items-center">
                 <Filter className="w-4 h-4 mr-1" /> Filtros:
             </span>
             <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}>
@@ -292,8 +294,9 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
         </div>
       </div>
 
-      {/* 2. BARRA DE NAVEGAÇÃO E RELATÓRIOS (Restaurada) */}
+      {/* 2. BARRA DE NAVEGAÇÃO E RELATÓRIOS */}
       <div className="bg-blue-50 dark:bg-slate-800 border border-blue-100 dark:border-slate-700 p-3 m-4 mt-0 rounded-lg flex flex-col md:flex-row items-center justify-between gap-4">
+        {/* ... (Resto do cabeçalho igual) ... */}
         <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
                 <button onClick={handlePrevMonth} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-300"><ChevronLeft className="w-5 h-5" /></button>
@@ -303,7 +306,6 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
             </div>
         </div>
         
-        {/* ÁREA DE RELATÓRIOS RESTAURADA */}
         <div className="flex items-center gap-3">
              <div className="flex flex-col md:flex-row items-center gap-2 text-sm">
                 <span className="font-medium text-gray-600 dark:text-gray-400">Relatório de:</span>
@@ -333,11 +335,11 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
         </div>
       </div>
 
-      {/* Grid do Calendário */}
-      <div className="flex-1 p-4 pt-0 overflow-hidden">
-        <div className="grid grid-cols-7 gap-1 h-full min-h-[500px]">
+      {/* Grid do Calendário (Com rolagem liberada) */}
+      <div className="flex-1 p-4 pt-0 overflow-y-auto scrollbar-thin">
+        <div className="grid grid-cols-7 gap-1 h-full min-h-[800px]">
           {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
-            <div key={d} className="text-center font-bold text-gray-500 py-2 bg-gray-200 dark:bg-gray-700 rounded-t">{d}</div>
+            <div key={d} className="text-center font-bold text-gray-500 py-2 bg-gray-200 dark:bg-gray-700 rounded-t sticky top-0 z-10 shadow-sm">{d}</div>
           ))}
           
           {daysInMonth.map((day, idx) => {
@@ -348,7 +350,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
               <div 
                 key={idx} 
                 className={`
-                    border dark:border-gray-700 rounded p-1 flex flex-col relative overflow-hidden transition-colors
+                    border dark:border-gray-700 rounded p-1 flex flex-col relative overflow-hidden transition-colors min-h-[100px]
                     ${day.isCurrentMonth ? 'bg-white dark:bg-gray-800' : 'bg-gray-100 dark:bg-gray-900 opacity-50'}
                     ${isToday ? 'ring-2 ring-blue-500' : ''}
                 `}
@@ -381,7 +383,7 @@ const Calendar: React.FC<CalendarProps> = ({ osList, onCardClick }) => {
         </div>
       </div>
       
-      {/* Modal Ver Mais */}
+      {/* Modal Ver Mais (Mantido) */}
       {moreInfoModal.isOpen && (
           <Modal isOpen={true} onClose={() => setMoreInfoModal({ ...moreInfoModal, isOpen: false })} title={moreInfoModal.title} footer={<button onClick={() => setMoreInfoModal({ ...moreInfoModal, isOpen: false })} className="btn-secondary">Fechar</button>}>
               <div className="space-y-2 max-h-[60vh] overflow-y-auto p-1">

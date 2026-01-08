@@ -1,32 +1,24 @@
 // File: components/Board.tsx
 import React, { useState } from 'react';
-import { OS, OSStatus, Priority } from '../types';
+import { useOutletContext } from 'react-router-dom';
+import { OSStatus, Priority } from '../types';
 import { format, parseISO, isAfter, startOfDay } from 'date-fns';
 import { Clock, AlertCircle, CheckCircle, PlayCircle, CalendarClock, Download, ChevronDown } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
-
-interface BoardProps {
-  osList: OS[];
-  onOpenDownloadFilter: (status?: string) => void;
-  onCardClick: (os: OS) => void;
-}
+import { DashboardContextType } from './Dashboard';
 
 const ITEMS_PER_PAGE = 10;
 
-const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick }) => {
+const Board: React.FC = () => {
+  // Pega dados do Contexto
+  const { filteredOSList, openModal } = useOutletContext<DashboardContextType>();
+  
   const { plants, users } = useData();
-  
-  // Estado para paginação local
   const [visibleCount, setVisibleCount] = useState<Record<string, number>>({});
-  
-  // Estado para feedback de "Copiado!"
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Helpers
   const getPlantName = (id: string) => plants.find(p => p.id === id)?.name || 'Usina não encontrada';
   const getUserName = (id?: string) => users.find(u => u.id === id)?.name || 'N/A';
-  
-  // Data de referência (hoje 00:00)
   const today = startOfDay(new Date());
 
   const handleLoadMore = (columnId: string) => {
@@ -46,23 +38,20 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
       }
   };
 
-  // Lógica de Copiar ID
   const handleCopyId = (e: React.MouseEvent, id: string) => {
-      e.stopPropagation(); // Impede abrir o modal de detalhes
+      e.stopPropagation();
       navigator.clipboard.writeText(id);
       setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000); // Remove aviso após 2s
+      setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Definição das Colunas e Filtros
   const columns = [
     {
       id: 'future', 
       title: 'Futuras',
       icon: CalendarClock,
       color: 'bg-indigo-500',
-      // Filtro: Pendente E Data > Hoje
-      items: osList.filter(os => {
+      items: filteredOSList.filter(os => {
           if (os.status !== OSStatus.PENDING) return false;
           const osDate = parseISO(os.startDate); 
           return isAfter(osDate, today) && os.startDate !== format(today, 'yyyy-MM-dd');
@@ -73,8 +62,7 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
       title: 'Pendente',
       icon: AlertCircle,
       color: 'bg-yellow-500',
-      // Filtro: Pendente E Data <= Hoje
-      items: osList.filter(os => {
+      items: filteredOSList.filter(os => {
           if (os.status !== OSStatus.PENDING) return false;
           const osDate = parseISO(os.startDate);
           return !isAfter(osDate, today) || os.startDate === format(today, 'yyyy-MM-dd');
@@ -85,21 +73,21 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
       title: 'Em Execução',
       icon: PlayCircle,
       color: 'bg-blue-500',
-      items: osList.filter(os => os.status === OSStatus.IN_PROGRESS)
+      items: filteredOSList.filter(os => os.status === OSStatus.IN_PROGRESS)
     },
     {
       id: OSStatus.IN_REVIEW,
       title: 'Em Revisão',
       icon: Clock,
       color: 'bg-purple-500',
-      items: osList.filter(os => os.status === OSStatus.IN_REVIEW)
+      items: filteredOSList.filter(os => os.status === OSStatus.IN_REVIEW)
     },
     {
       id: OSStatus.COMPLETED,
       title: 'Concluído',
       icon: CheckCircle,
       color: 'bg-green-500',
-      items: osList.filter(os => os.status === OSStatus.COMPLETED)
+      items: filteredOSList.filter(os => os.status === OSStatus.COMPLETED)
     }
   ];
 
@@ -114,7 +102,6 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
             return (
               <div key={col.id} className="flex-1 flex flex-col bg-gray-100 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700 h-full max-w-xs">
                 
-                {/* Header da Coluna */}
                 <div className={`p-3 rounded-t-xl flex justify-between items-center text-white ${col.color}`}>
                   <div className="flex items-center gap-2 font-bold">
                     <col.icon size={18} />
@@ -124,7 +111,7 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
                       <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{col.items.length}</span>
                       {col.id !== 'future' && ( 
                           <button 
-                            onClick={() => onOpenDownloadFilter(col.id)}
+                            onClick={() => openModal('DOWNLOAD_FILTER', { status: col.id })}
                             className="hover:bg-white/20 p-1 rounded transition-colors"
                             title="Baixar relatório"
                           >
@@ -134,21 +121,16 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
                   </div>
                 </div>
 
-                {/* Lista de Cards */}
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
                   {visibleItems.map(os => (
                     <div 
                       key={os.id} 
-                      // ✅ CORREÇÃO: Removido 'overflow-hidden' para o tooltip não ser cortado
                       className="relative bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-200 dark:border-gray-600 hover:shadow-md transition-shadow cursor-pointer group"
-                      onClick={() => onCardClick(os)} 
+                      onClick={() => openModal('OS_DETAIL', { os })} 
                     >
-                      {/* ✅ CORREÇÃO: Adicionado 'rounded-l-lg' para a barra colorida acompanhar a borda do card */}
                       <div className={`absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg ${getPriorityColor(os.priority)}`} />
 
                       <div className="flex justify-between items-start mb-2 pl-2">
-                        
-                        {/* ID da OS (Copiável) */}
                         <div className="relative">
                             <span 
                                 className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer select-none"
@@ -157,11 +139,9 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
                             >
                                 {os.id}
                             </span>
-                            {/* Tooltip "Copiado!" (Agora não será cortado) */}
                             {copiedId === os.id && (
                                 <span className="absolute left-0 -top-7 bg-gray-900 text-white text-[10px] px-2 py-1 rounded shadow-lg animate-fade-in-out whitespace-nowrap z-[9999]">
                                     Copiado!
-                                    {/* Seta do tooltip */}
                                     <span className="absolute -bottom-1 left-2 w-2 h-2 bg-gray-900 rotate-45"></span>
                                 </span>
                             )}
@@ -188,14 +168,12 @@ const Board: React.FC<BoardProps> = ({ osList, onOpenDownloadFilter, onCardClick
                           </div>
                           <span className="flex items-center gap-1">
                               <CalendarClock size={12} />
-                              {/* Formata a data para dd/mm/yyyy */}
                               {os.startDate.split('-').reverse().join('/')}
                           </span>
                       </div>
                     </div>
                   ))}
                   
-                  {/* Botão Carregar Mais */}
                   {hasMore && (
                       <button 
                         onClick={() => handleLoadMore(col.id)}

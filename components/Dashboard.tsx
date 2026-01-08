@@ -1,16 +1,14 @@
 // File: components/Dashboard.tsx
 import React, { useState, useMemo } from 'react';
+import { Outlet } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
-import { ViewType, Role, OSStatus } from '../types';
+import { OS } from '../types';
+import { Plus } from 'lucide-react'; // ✅ Importar ícone Plus
 
-// Componentes de Layout e Visualização
+// Componentes de Layout
 import Sidebar from './Sidebar';
 import Header from './Header';
-import Board from './Board';
-import Calendar from './Calendar';
-import Schedule52Weeks from './Schedule52Weeks';
-import MaintenancePlans from './MaintenancePlans';
 
 // Modais
 import OSDetailModal from './modals/OSDetailModal';
@@ -21,7 +19,13 @@ import DownloadModal from './modals/DownloadModal';
 import ScheduleOSModal from './modals/ScheduleOSModal';
 import ManagementModal, { ManagementModalConfig } from './modals/ManagementModal';
 
-interface DashboardModalConfig {
+export interface DashboardContextType {
+  filteredOSList: OS[];
+  searchTerm: string;
+  openModal: (type: DashboardModalConfig['type'], data?: any) => void;
+}
+
+export interface DashboardModalConfig {
   type: 'OS_DETAIL' | 'OS_FORM' | 'MANAGE_USERS' | 'MANAGE_PLANTS' | 'USER_FORM' | 'PLANT_FORM' | 'DOWNLOAD_FILTER' | 'SCHEDULE_RECURRENCE';
   data?: any;
 }
@@ -29,22 +33,15 @@ interface DashboardModalConfig {
 const Dashboard: React.FC = () => {
   const { osList, plants, users } = useData();
   const { user } = useAuth();
-
-  // Define a view padrão (Kanban)
-  const [currentView, setCurrentView] = useState<ViewType>('KANBAN');
   
-  // Estado do termo de busca (Search) do Header
   const [searchTerm, setSearchTerm] = useState('');
   
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [modalConfig, setModalConfig] = useState<DashboardModalConfig | null>(null);
 
-  // 🔥 LÓGICA DE FILTRO (SEARCH) - ATUALIZADA
-  // Filtra a lista de OSs com base no texto digitado no Header.
   const filteredOSList = useMemo(() => {
     if (!searchTerm.trim()) return osList;
-
     const lowerTerm = searchTerm.toLowerCase();
 
     return osList.filter(os => {
@@ -53,9 +50,6 @@ const Dashboard: React.FC = () => {
         const osTitle = os.title.toLowerCase();
         const osId = os.id.toLowerCase();
         const osDesc = os.description?.toLowerCase() || '';
-        
-        // ✅ CORREÇÃO 1: Incluir busca nos Ativos (ex: Transformador, Disjuntor)
-        // Verifica se existe array de assets ou assetName legado
         const assetsStr = os.assets 
             ? os.assets.join(' ').toLowerCase() 
             : ((os as any).assetName || '').toLowerCase();
@@ -66,68 +60,33 @@ const Dashboard: React.FC = () => {
             plantName.includes(lowerTerm) ||
             techName.includes(lowerTerm) ||
             osDesc.includes(lowerTerm) ||
-            assetsStr.includes(lowerTerm) // <--- Agora busca "Transformador" funciona
+            assetsStr.includes(lowerTerm)
         );
     });
   }, [osList, searchTerm, plants, users]);
 
-  // Handlers
   const closeModal = () => setModalConfig(null);
+  
+  const handleOpenModal = (type: DashboardModalConfig['type'], data?: any) => {
+    setModalConfig({ type, data });
+  };
 
-  // Renderização da área principal baseada na View selecionada
-  const renderContent = () => {
-    switch (currentView) {
-      case 'KANBAN':
-        return (
-          <Board 
-            osList={filteredOSList} 
-            onOpenDownloadFilter={(status) => setModalConfig({ type: 'DOWNLOAD_FILTER', data: { status } })}
-            onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: { os } })}
-          />
-        );
-      case 'CALENDAR':
-        return (
-          <Calendar 
-            osList={filteredOSList} 
-            onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: { os } })}
-          />
-        );
-      case 'SCHEDULE_52_WEEKS': 
-        return (
-          <Schedule52Weeks 
-            // Você pode passar a lista já filtrada OU a lista completa.
-            // Passando a filteredOSList, garantimos que o filtro do Dashboard manda.
-            osList={filteredOSList} 
-            
-            // ✅ CORREÇÃO 2: Passar o termo de busca para o componente
-            searchTerm={searchTerm}
-
-            onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: { os } })}
-            onOpenScheduler={() => setModalConfig({ type: 'SCHEDULE_RECURRENCE' })}
-          />
-        );
-      case 'MAINTENANCE_PLANS':
-        return <MaintenancePlans />;
-      default:
-        return <div>Em construção...</div>;
-    }
+  const contextValue: DashboardContextType = {
+    filteredOSList,
+    searchTerm,
+    openModal: handleOpenModal
   };
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 overflow-hidden">
-      {/* Sidebar */}
       <Sidebar
         isMobileOpen={isMobileOpen}
         setMobileOpen={setIsMobileOpen}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
-        currentView={currentView}
-        setCurrentView={setCurrentView}
-        onOpenManagement={() => {}} 
-        setModalConfig={(cfg) => setModalConfig(cfg as any)}
+        setModalConfig={setModalConfig} 
       />
 
-      {/* Conteúdo Principal */}
       <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
         <Header 
           searchTerm={searchTerm}
@@ -138,12 +97,20 @@ const Dashboard: React.FC = () => {
         />
 
         <main className="flex-1 overflow-hidden relative p-0 sm:p-2">
-            {renderContent()}
+            <Outlet context={contextValue} />
+            
+            {/* ✅ BOTÃO FLUTUANTE PARA MOBILE (FAB) */}
+            <button
+              className="lg:hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center z-50 transition-transform active:scale-95"
+              onClick={() => setModalConfig({ type: 'OS_FORM' })}
+              title="Nova Ordem de Serviço"
+            >
+              <Plus size={28} />
+            </button>
         </main>
       </div>
 
       {/* --- MODAIS GLOBAIS --- */}
-
       {modalConfig?.type === 'OS_DETAIL' && (
         <OSDetailModal
           isOpen={true}
@@ -175,11 +142,7 @@ const Dashboard: React.FC = () => {
           config={modalConfig as unknown as ManagementModalConfig} 
           onOpenUserForm={(userToEdit, roleToSet) => setModalConfig({ 
               type: 'USER_FORM', 
-              data: { 
-                  user: userToEdit, 
-                  role: roleToSet, 
-                  parentConfig: modalConfig 
-              } 
+              data: { user: userToEdit, role: roleToSet, parentConfig: modalConfig } 
           })}
           onOpenPlantForm={(plantToEdit) => setModalConfig({ 
               type: 'PLANT_FORM', 
@@ -212,7 +175,6 @@ const Dashboard: React.FC = () => {
             initialStatus={modalConfig.data?.status}
         />
       )}
-
     </div>
   );
 };

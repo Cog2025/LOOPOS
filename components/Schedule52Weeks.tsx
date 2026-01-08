@@ -1,24 +1,23 @@
 // File: components/Schedule52Weeks.tsx
-
 import React, { useState, useMemo } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { OS, Role, Priority } from '../types';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import Modal from './modals/Modal';
 import ScheduleOSModal from './modals/ScheduleOSModal'; 
+import { DashboardContextType } from './Dashboard';
+import { Filter, ChevronDown, ChevronUp } from 'lucide-react'; // ✅ Ícones novos
 
-interface Schedule52WeeksProps {
-  osList: OS[]; 
-  onCardClick: (os: OS) => void; 
-  onOpenScheduler?: () => void;
-  searchTerm?: string; // ADICIONADO: Recebe o termo da barra de busca
-}
+const Schedule52Weeks: React.FC = () => {
+  const { filteredOSList, searchTerm, openModal } = useOutletContext<DashboardContextType>();
+  
+  const onCardClick = (os: OS) => openModal('OS_DETAIL', { os });
 
-const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, searchTerm = '' }) => {
   const { plants, users, filterOSForUser, deleteOSBatch } = useData();
   const { user } = useAuth();
 
-  // --- ESTADOS DE FILTRO ---
+  // Estados de Filtro
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedPlant, setSelectedPlant] = useState('');
@@ -26,7 +25,9 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
   const [selectedAsset, setSelectedAsset] = useState('');
   const [selectedTechnician, setSelectedTechnician] = useState('');
 
-  // --- ESTADOS DE UI ---
+  // ✅ NOVO: Estado para controlar visibilidade dos filtros no mobile
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+
   const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
   const [moreInfoModal, setMoreInfoModal] = useState<{ isOpen: boolean; title: string; items: OS[] }>({
       isOpen: false, title: '', items: []
@@ -35,12 +36,10 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedOSIds, setSelectedOSIds] = useState<string[]>([]);
    
-  // Permissões
   const canManage = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
-
   const years = [2024, 2025, 2026, 2027];
 
-  // --- FILTROS (Lógica Inalterada) ---
+  // --- LÓGICAS DE FILTRO E MEMO (Mantidas idênticas) ---
   const availablePlants = useMemo(() => {
       const filtered = plants.filter(plant => {
           if (!user) return false;
@@ -67,7 +66,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
 
   const uniqueAssets = useMemo(() => {
     const assetsSet = new Set<string>();
-    osList.forEach(os => {
+    filteredOSList.forEach(os => {
       if (os.assets && os.assets.length > 0) {
         os.assets.forEach(a => assetsSet.add(a));
       }
@@ -76,36 +75,11 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
       }
     });
     return Array.from(assetsSet).sort();
-  }, [osList]);
+  }, [filteredOSList]);
 
-  // --- LÓGICA DE FILTRAGEM (AGORA COM BUSCA TEXTUAL) ---
   const visibleOS = useMemo(() => {
-    let list = user ? filterOSForUser(user) : osList;
-    
-    // Preparar termo de busca para performance
-    const normalizedSearch = searchTerm ? searchTerm.toLowerCase() : '';
-
+    let list = user ? filterOSForUser(user) : filteredOSList;
     list = list.filter(os => {
-        // 1. FILTRO DE BUSCA TEXTUAL (GLOBAL)
-        if (normalizedSearch) {
-            const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
-            const techName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
-            const osId = os.id.toString().toLowerCase();
-            const activity = os.activity.toLowerCase();
-            // Verifica ativos (array ou string)
-            const assetsStr = os.assets ? os.assets.join(' ').toLowerCase() : ((os as any).assetName || '').toLowerCase();
-
-            const matchesSearch = 
-                osId.includes(normalizedSearch) ||
-                activity.includes(normalizedSearch) ||
-                plantName.includes(normalizedSearch) ||
-                techName.includes(normalizedSearch) ||
-                assetsStr.includes(normalizedSearch);
-
-            if (!matchesSearch) return false;
-        }
-
-        // 2. FILTROS DA BARRA (Dropdowns)
         const date = new Date(os.startDate);
         if (date.getFullYear() !== selectedYear) return false;
         
@@ -120,13 +94,11 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
             if (!hasAsset) return false;
         }
         if (selectedTechnician && os.technicianId !== selectedTechnician) return false;
-        
         return true;
     });
     return list;
-  }, [osList, user, selectedYear, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants, availablePlants, filterOSForUser, searchTerm]);
+  }, [filteredOSList, user, selectedYear, selectedClient, selectedPlant, selectedPriority, selectedAsset, selectedTechnician, plants, availablePlants, filterOSForUser]);
 
-  // --- GERAÇÃO DAS SEMANAS ---
   const weeks = useMemo(() => {
     const weeksArray = [];
     const startDate = new Date(selectedYear, 0, 1);
@@ -151,7 +123,6 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
         const startOfYear = new Date(selectedYear, 0, 1);
         const pastDays = (date.getTime() - startOfYear.getTime()) / 86400000;
         const weekNum = Math.ceil((pastDays + startOfYear.getDay() + 1) / 7);
-        
         if (weekNum >= 1 && weekNum <= 52) {
             if (!grouped[weekNum]) grouped[weekNum] = [];
             grouped[weekNum].push(os);
@@ -160,7 +131,6 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
     return grouped;
   }, [visibleOS, selectedYear]);
 
-  // --- HANDLERS ---
   const toggleSelection = (id: string) => {
       setSelectedOSIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -207,18 +177,69 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
 
-  const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1.5 px-3";
+  const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1.5 px-3 w-full lg:w-auto";
 
   return (
-    // ESTRUTURA FIXA: Flex Column com altura 100% e overflow hidden
     <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
       
-      {/* 1. CABEÇALHO (Fixo) */}
+      {/* 1. BARRA DE FILTROS (MODIFICADA PARA RESPONSIVIDADE) */}
       <div className="flex-none p-4 pb-0 bg-gray-50 dark:bg-gray-900 z-10">
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm flex flex-wrap gap-4 items-center justify-between border-b dark:border-gray-700">
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border-b dark:border-gray-700">
             
-            <div className="flex flex-wrap gap-3 items-center">
-                <span className="text-sm font-bold text-gray-700 dark:text-gray-300 mr-2">Filtros:</span>
+            {/* Cabeçalho do Filtro + Botões de Ação */}
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-2">
+                
+                {/* Botão Toggle Mobile */}
+                <button 
+                    onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                    className="lg:hidden flex items-center gap-2 text-sm font-bold text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-lg w-full sm:w-auto justify-center"
+                >
+                    <Filter className="w-4 h-4" />
+                    Filtros
+                    {isFiltersOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {/* Texto Desktop */}
+                <span className="hidden lg:block text-sm font-bold text-gray-700 dark:text-gray-300 mr-2">
+                    Filtros:
+                </span>
+
+                {/* Botões de Ação (Sempre visíveis ou adaptados) */}
+                <div className="flex gap-2 w-full sm:w-auto justify-end">
+                    {canManage && (
+                        <>
+                            {isSelectionMode ? (
+                                <div className="flex gap-2 animate-fadeIn items-center w-full justify-end">
+                                    <label className="flex items-center space-x-2 cursor-pointer bg-blue-50 dark:bg-slate-700 px-3 py-1.5 rounded border dark:border-gray-600">
+                                        <input type="checkbox" checked={selectedOSIds.length === visibleOS.length && visibleOS.length > 0} onChange={handleSelectAll} className="rounded text-blue-600 w-4 h-4" />
+                                        <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Todos</span>
+                                    </label>
+                                    <button onClick={handleDeleteSelected} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 disabled:bg-gray-400">
+                                        🗑️
+                                    </button>
+                                    <button onClick={() => setIsSelectionMode(false)} className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-200 rounded shadow-sm hover:bg-gray-300">
+                                        X
+                                    </button>
+                                </div>
+                            ) : (
+                                <button onClick={() => setIsSelectionMode(true)} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded shadow-sm hover:bg-blue-700 flex items-center gap-2">
+                                    ✏️ <span className="hidden sm:inline">Gerenciar</span>
+                                </button>
+                            )}
+                            <button onClick={() => setIsSchedulerOpen(true)} className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded shadow-sm hover:bg-green-700 flex items-center gap-2">
+                                + <span className="hidden sm:inline">Agendar</span>
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
+
+            {/* Container dos Selects (Colapsável no Mobile) */}
+            <div className={`
+                flex-col lg:flex-row flex-wrap gap-3 items-center
+                ${isFiltersOpen ? 'flex mt-3 border-t pt-3 dark:border-gray-700' : 'hidden'} 
+                lg:flex lg:mt-0 lg:border-none lg:pt-0
+            `}>
                 <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className={selectClass}>{years.map(y => <option key={y} value={y}>{y}</option>)}</select>
                 <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}><option value="">Todos Clientes</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select>
                 <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}><option value="">Todas Usinas</option>{availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
@@ -227,38 +248,10 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
                 <select value={selectedTechnician} onChange={e => setSelectedTechnician(e.target.value)} className={selectClass}><option value="">Todos Técnicos</option>{availableUsers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
             </div>
 
-            <div className="flex gap-2">
-                {canManage && (
-                    <>
-                        {isSelectionMode ? (
-                            <div className="flex gap-2 animate-fadeIn items-center">
-                                <label className="flex items-center space-x-2 cursor-pointer bg-blue-50 dark:bg-slate-700 px-3 py-1.5 rounded border dark:border-gray-600" title="Selecionar todos os itens visíveis">
-                                    <input type="checkbox" checked={selectedOSIds.length === visibleOS.length && visibleOS.length > 0} onChange={handleSelectAll} className="rounded text-blue-600 w-4 h-4" />
-                                    <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Todos</span>
-                                </label>
-                                
-                                <button onClick={handleDeleteSelected} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 disabled:bg-gray-400 transition-colors">
-                                    🗑️ Excluir ({selectedOSIds.length})
-                                </button>
-                                <button onClick={() => setIsSelectionMode(false)} className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-200 rounded shadow-sm hover:bg-gray-300 transition-colors">
-                                    Cancelar
-                                </button>
-                            </div>
-                        ) : (
-                            <button onClick={() => setIsSelectionMode(true)} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded shadow-sm hover:bg-blue-700 transition-colors flex items-center gap-2">
-                                ✏️ Gerenciar
-                            </button>
-                        )}
-                        <button onClick={() => setIsSchedulerOpen(true)} className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded shadow-sm hover:bg-green-700 transition-colors flex items-center gap-2">
-                            + Agendar
-                        </button>
-                    </>
-                )}
-            </div>
         </div>
       </div>
 
-      {/* 2. ÁREA DE ROLAGEM (Conteúdo) */}
+      {/* 2. ÁREA DE ROLAGEM */}
       <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 pb-10">
             {weeks.map(w => {
@@ -269,7 +262,6 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
 
                 return (
                     <div key={w.weekNumber} className={`border dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg p-2 min-h-[160px] flex flex-col shadow-sm transition-colors ${isSelectionMode ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer' : ''}`}>
-                        
                         <div className="text-sm text-center text-gray-700 dark:text-gray-300 border-b dark:border-gray-700 mb-2 pb-1">
                             <span className="font-bold block">SEM {w.weekNumber}</span> 
                             <span className="text-xs opacity-75">{formatDate(w.start)} - {formatDate(w.end)}</span>
@@ -315,7 +307,7 @@ const Schedule52Weeks: React.FC<Schedule52WeeksProps> = ({ osList, onCardClick, 
         </div>
       </div>
 
-      {/* MODAL VER MAIS */}
+      {/* MODAL VER MAIS (MANTIDO IGUAL) */}
       {moreInfoModal.isOpen && (
           <Modal 
             isOpen={true} 
