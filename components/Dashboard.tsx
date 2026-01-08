@@ -1,5 +1,5 @@
 // File: components/Dashboard.tsx
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ViewType, Role, OSStatus } from '../types';
@@ -30,136 +30,149 @@ const Dashboard: React.FC = () => {
   const { osList, plants, users } = useData();
   const { user } = useAuth();
 
-  // ✅ CORRIGIDO: Usa 'KANBAN' como padrão (igual ao Sidebar e types.ts)
+  // Define a view padrão (Kanban)
   const [currentView, setCurrentView] = useState<ViewType>('KANBAN');
   
-  // Estado para controle da Sidebar Mobile
-  const [isMobileOpen, setMobileOpen] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  
-  // Estado para Busca Global
+  // Estado do termo de busca (Search) do Header
   const [searchTerm, setSearchTerm] = useState('');
-
-  // Configuração centralizada de Modais
+  
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [modalConfig, setModalConfig] = useState<DashboardModalConfig | null>(null);
 
-  // --- FILTROS DE BUSCA ---
-  const filteredOSList = osList.filter(os => {
-    // Helper para normalizar texto (remove acentos e põe em minúsculo)
-    const normalize = (str: string) => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const searchNorm = normalize(searchTerm);
+  // 🔥 LÓGICA DE FILTRO (SEARCH) - ATUALIZADA
+  // Filtra a lista de OSs com base no texto digitado no Header.
+  const filteredOSList = useMemo(() => {
+    if (!searchTerm.trim()) return osList;
 
-    const plantName = plants.find(p => p.id === os.plantId)?.name || '';
-    const technicianName = users.find(u => u.id === os.technicianId)?.name || '';
-    
-    return (
-      normalize(os.title).includes(searchNorm) ||
-      normalize(os.id).includes(searchNorm) ||
-      normalize(plantName).includes(searchNorm) ||
-      normalize(technicianName).includes(searchNorm) ||
-      (os.activity && normalize(os.activity).includes(searchNorm))
-    );
-  });
+    const lowerTerm = searchTerm.toLowerCase();
 
-  // --- HANDLERS ---
+    return osList.filter(os => {
+        const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
+        const techName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
+        const osTitle = os.title.toLowerCase();
+        const osId = os.id.toLowerCase();
+        const osDesc = os.description?.toLowerCase() || '';
+        
+        // ✅ CORREÇÃO 1: Incluir busca nos Ativos (ex: Transformador, Disjuntor)
+        // Verifica se existe array de assets ou assetName legado
+        const assetsStr = os.assets 
+            ? os.assets.join(' ').toLowerCase() 
+            : ((os as any).assetName || '').toLowerCase();
+
+        return (
+            osTitle.includes(lowerTerm) ||
+            osId.includes(lowerTerm) ||
+            plantName.includes(lowerTerm) ||
+            techName.includes(lowerTerm) ||
+            osDesc.includes(lowerTerm) ||
+            assetsStr.includes(lowerTerm) // <--- Agora busca "Transformador" funciona
+        );
+    });
+  }, [osList, searchTerm, plants, users]);
+
+  // Handlers
   const closeModal = () => setModalConfig(null);
+
+  // Renderização da área principal baseada na View selecionada
+  const renderContent = () => {
+    switch (currentView) {
+      case 'KANBAN':
+        return (
+          <Board 
+            osList={filteredOSList} 
+            onOpenDownloadFilter={(status) => setModalConfig({ type: 'DOWNLOAD_FILTER', data: { status } })}
+            onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: { os } })}
+          />
+        );
+      case 'CALENDAR':
+        return (
+          <Calendar 
+            osList={filteredOSList} 
+            onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: { os } })}
+          />
+        );
+      case 'SCHEDULE_52_WEEKS': 
+        return (
+          <Schedule52Weeks 
+            // Você pode passar a lista já filtrada OU a lista completa.
+            // Passando a filteredOSList, garantimos que o filtro do Dashboard manda.
+            osList={filteredOSList} 
+            
+            // ✅ CORREÇÃO 2: Passar o termo de busca para o componente
+            searchTerm={searchTerm}
+
+            onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: { os } })}
+            onOpenScheduler={() => setModalConfig({ type: 'SCHEDULE_RECURRENCE' })}
+          />
+        );
+      case 'MAINTENANCE_PLANS':
+        return <MaintenancePlans />;
+      default:
+        return <div>Em construção...</div>;
+    }
+  };
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 overflow-hidden">
-      
-      {/* SIDEBAR */}
-      <Sidebar 
+      {/* Sidebar */}
+      <Sidebar
         isMobileOpen={isMobileOpen}
-        setMobileOpen={setMobileOpen}
-        isCollapsed={isCollapsed}
-        setIsCollapsed={setIsCollapsed}
+        setMobileOpen={setIsMobileOpen}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
         currentView={currentView}
         setCurrentView={setCurrentView}
-        setModalConfig={(cfg) => setModalConfig(cfg as any)} // Cast simples para compatibilidade
-        onOpenManagement={() => setModalConfig({ type: 'MANAGE_PLANTS', data: {} })}
+        onOpenManagement={() => {}} 
+        setModalConfig={(cfg) => setModalConfig(cfg as any)}
       />
 
-      {/* ÁREA PRINCIPAL */}
+      {/* Conteúdo Principal */}
       <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
-        
-        {/* HEADER */}
         <Header 
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}
-          toggleSidebar={() => setMobileOpen(!isMobileOpen)}
-          onMenuClick={() => setMobileOpen(true)}
-          onNewOSClick={() => setModalConfig({ type: 'OS_FORM', data: null })}
+          toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          onMenuClick={() => setIsMobileOpen(true)}
+          onNewOSClick={() => setModalConfig({ type: 'OS_FORM' })}
         />
 
-        {/* CONTEÚDO (Renderiza conforme a View selecionada no Sidebar) */}
-        <main className="flex-1 overflow-hidden relative">
-          
-          {/* ✅ CORRIGIDO: Renderiza com base nos IDs restaurados */}
-          {currentView === 'KANBAN' && (
-            <Board 
-              osList={filteredOSList} 
-              onOpenDownloadFilter={(status) => setModalConfig({ 
-                  type: 'DOWNLOAD_FILTER', 
-                  data: { status: status || '' } 
-              })}
-              // ✅ Passa a função para abrir detalhes ao clicar no card
-              onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: os })}
-            />
-          )}
-
-          {currentView === 'CALENDAR' && (
-            <Calendar 
-              osList={filteredOSList}
-              onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: os })}
-            />
-          )}
-
-          {currentView === 'SCHEDULE_52_WEEKS' && (
-            <Schedule52Weeks 
-              osList={filteredOSList}
-              onCardClick={(os) => setModalConfig({ type: 'OS_DETAIL', data: os })}
-              onOpenScheduler={() => setModalConfig({ type: 'SCHEDULE_RECURRENCE' })}
-            />
-          )}
-
-          {currentView === 'MAINTENANCE_PLANS' && (
-            <MaintenancePlans />
-          )}
+        <main className="flex-1 overflow-hidden relative p-0 sm:p-2">
+            {renderContent()}
         </main>
       </div>
 
-      {/* --- RENDERIZAÇÃO DE MODAIS --- */}
+      {/* --- MODAIS GLOBAIS --- */}
 
       {modalConfig?.type === 'OS_DETAIL' && (
-        <OSDetailModal 
-          isOpen={true} 
-          os={modalConfig.data} 
-          onClose={closeModal} 
-          onEdit={() => setModalConfig({ type: 'OS_FORM', data: modalConfig.data })}
+        <OSDetailModal
+          isOpen={true}
+          os={modalConfig.data.os}
+          onClose={closeModal}
+          onEdit={() => setModalConfig({ type: 'OS_FORM', data: { os: modalConfig.data.os } })}
         />
       )}
 
       {modalConfig?.type === 'OS_FORM' && (
-        <OSForm 
-          isOpen={true} 
-          initialData={modalConfig.data} 
-          onClose={closeModal} 
+        <OSForm
+          isOpen={true}
+          initialData={modalConfig.data?.os}
+          onClose={closeModal}
         />
       )}
 
       {modalConfig?.type === 'SCHEDULE_RECURRENCE' && (
-        <ScheduleOSModal 
-          isOpen={true} 
-          onClose={closeModal} 
+        <ScheduleOSModal
+          isOpen={true}
+          onClose={closeModal}
         />
       )}
 
-      {/* Modais de Gestão (Usinas/Usuários) */}
       {(modalConfig?.type === 'MANAGE_USERS' || modalConfig?.type === 'MANAGE_PLANTS') && (
         <ManagementModal
           isOpen={true}
           onClose={closeModal}
-          config={modalConfig as unknown as ManagementModalConfig} // Cast para compatibilidade
+          config={modalConfig as unknown as ManagementModalConfig} 
           onOpenUserForm={(userToEdit, roleToSet) => setModalConfig({ 
               type: 'USER_FORM', 
               data: { 
@@ -195,8 +208,8 @@ const Dashboard: React.FC = () => {
       {modalConfig?.type === 'DOWNLOAD_FILTER' && (
         <DownloadModal 
             isOpen={true} 
-            onClose={closeModal} 
-            initialStatus={modalConfig.data?.status} 
+            onClose={closeModal}
+            initialStatus={modalConfig.data?.status}
         />
       )}
 

@@ -25,6 +25,19 @@ const getFrequencyLabel = (days: number): string => {
   return `${days} DIAS`;
 };
 
+// 🔥 CORREÇÃO: Helper para traduzir a criticidade do texto para a Prioridade da OS
+const mapCriticalityToPriority = (crit: string | undefined): Priority => {
+    if (!crit) return Priority.MEDIUM;
+    const c = crit.toUpperCase().trim();
+    
+    if (c.includes('MUITO ALTO') || c.includes('URGENTE') || c === 'CRÍTICA') return Priority.URGENT;
+    if (c.includes('ALTO') || c.includes('ALTA')) return Priority.HIGH;
+    if (c.includes('MÉDIO') || c.includes('MEDIO') || c.includes('MÉDIA') || c.includes('MEDIA')) return Priority.MEDIUM;
+    if (c.includes('BAIXO') || c.includes('BAIXA')) return Priority.LOW;
+    
+    return Priority.MEDIUM;
+};
+
 const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) => {
   const { 
     plants, 
@@ -42,7 +55,7 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // NOVO: Estado para controlar quais ativos estão expandidos
+  // Estado para controlar quais ativos estão expandidos
   const [expandedAssets, setExpandedAssets] = useState<string[]>([]);
 
   useEffect(() => {
@@ -165,13 +178,17 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
     rawPlanList.forEach(task => {
       if (selectedTaskIds.includes(task.id) && task.active) {
         const taskDates = generateDates(task.frequency_days, startObj, endObj);
+        
+        // 🔥 CORREÇÃO: Obtém a prioridade correta baseada na criticidade do plano
+        const correctPriority = mapCriticalityToPriority(task.criticality);
+
         taskDates.forEach(date => {
           batchOS.push({
             plantId,
             technicianId: technicianId || undefined,
             supervisorId: users.find(u => u.id === technicianId)?.supervisorId || undefined,
             status: OSStatus.PENDING,
-            priority: Priority.MEDIUM,
+            priority: correctPriority, // ✅ Agora usa a variável calculada, não 'MEDIUM' fixo
             startDate: date.toISOString(),
             activity: task.title,
             description: `Plano de Manutenção: ${task.asset_category} - ${task.title}`,
@@ -293,7 +310,7 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
                                 >
                                     {/* Ícone de Expansão */}
                                     <div onClick={(e) => { e.stopPropagation(); toggleExpand(category); }} className="p-1 hover:bg-black/5 rounded">
-                                       {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+                                        {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
                                     </div>
                                     
                                     {/* Checkbox do Grupo (Ativo) */}
@@ -341,9 +358,17 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
                                                             <span className={`text-sm truncate ${isSelected ? 'text-slate-900 dark:text-slate-100' : 'text-slate-500'}`}>
                                                                 {task.title}
                                                             </span>
-                                                            <span className={`text-[10px] uppercase font-bold px-1.5 rounded ml-2 ${isSelected ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
-                                                                {getFrequencyLabel(task.frequency_days)}
-                                                            </span>
+                                                            <div className="flex items-center">
+                                                                <span className={`text-[10px] uppercase font-bold px-1.5 rounded ml-2 ${isSelected ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
+                                                                    {getFrequencyLabel(task.frequency_days)}
+                                                                </span>
+                                                                {/* Indicador visual de criticidade */}
+                                                                {(task.criticality?.toUpperCase().includes('ALTO') || task.criticality?.toUpperCase().includes('URGENTE')) && (
+                                                                    <span className="text-[10px] uppercase font-bold px-1.5 rounded ml-1 bg-red-100 text-red-600 border border-red-200">
+                                                                        {task.criticality}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
