@@ -12,6 +12,8 @@ import { useOffline } from '../../contexts/OfflineContext';
 import OSExecutionModal from './OSExecutionModal';
 
 import { generateOSReport } from '../utils/pdfGenerator';
+// ✅ Importação do gerador de ZIP
+import { generateOSZipPackage } from '../utils/zipService'; 
 import { saveFile } from '../utils/fileSaver';
 
 import {
@@ -61,7 +63,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
     const s = (dateStr || '').trim();
     if (!s) return '-';
 
-    // Se vier ISO completo
     if (s.includes('T')) {
         try {
         return format(parseISO(s), 'dd/MM/yyyy');
@@ -70,16 +71,13 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
         }
     }
 
-    // Se vier YYYY-MM-DD
     if (s.includes('-')) {
         const [year, month, day] = s.split('-');
         return `${day}/${month}/${year}`;
     }
 
     return s;
-    };
-
-
+  };
 
   const parseUtc = (s?: string) => {
     if (!s) return null;
@@ -97,11 +95,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
       .padStart(2, '0')}`;
   };
 
-  // ---------------------------------------------------------------------------
-  // Histórico: helpers para exibir número + título
-  // ---------------------------------------------------------------------------
-
-  // Extrai número do próprio texto se vier como "3) Algo", "3 - Algo", "3. Algo", etc.
+  // Helpers de Histórico
   const parseSubtaskLabel = (raw: string): { n: number | null; title: string } => {
     const s = (raw || '').trim();
     const m = s.match(/^\s*(\d+)\s*([.)-])\s*(.*)\s*$/);
@@ -113,7 +107,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
     return { n: null, title: s };
   };
 
-  // Se não tiver número no texto, tenta inferir pelo título comparando com liveOS.subtasksStatus
   const getSubtaskNumberByTitle = (title: string): number | null => {
     const list = Array.isArray(liveOS.subtasksStatus) ? (liveOS.subtasksStatus as any[]) : [];
     const target = (title || '').trim();
@@ -148,16 +141,24 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
     return { allowed: isAssigned, reason: isAssigned ? '' : 'Somente a equipe escalada' };
   }, [user, liveOS]);
 
-  const handleDownloadPDF = async () => {
+  // ✅ NOVA FUNÇÃO DE DOWNLOAD DE PACOTE (PDF + ANEXOS + VÍDEOS)
+  const handleDownloadPackage = async () => {
     setIsDownloading(true);
     try {
-      const helpers = { getPlantName, getUserName: (id: string) => getUserName(id) };
-      const doc = await generateOSReport([liveOS], `Relatório OS ${liveOS.id}`, helpers, false);
-      const pdfBase64 = doc.output('datauristring').split(',')[1];
-      await saveFile(`OS_${liveOS.id}.pdf`, pdfBase64, 'application/pdf');
+      const helpers = { 
+          getPlantName, 
+          getUserName: (id: string) => getUserName(id) 
+      };
+      
+      // Gera ZIP com estrutura de pastas
+      const zipBase64 = await generateOSZipPackage(liveOS, helpers);
+      
+      const fileName = `Pacote_${liveOS.id}.zip`;
+      await saveFile(fileName, zipBase64, 'application/zip');
+      
     } catch (error) {
       console.error(error);
-      alert('Erro ao gerar PDF');
+      alert('Erro ao gerar pacote de download. Verifique se os arquivos ainda existem no servidor.');
     } finally {
       setIsDownloading(false);
     }
@@ -189,7 +190,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
     try {
       if (isOnline) {
         await addOSLog(liveOS.id, log as any);
-        // Opcional, mas ajuda a refletir imediatamente no Detail:
         await reloadFromAPI();
       } else {
         await saveOfflineAction('ADD_LOG', liveOS.id, log);
@@ -220,12 +220,13 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
         isOpen={isOpen}
         onClose={() => {
             console.log("DETAIL onClose");
-            if (showExecutionModal) return; // bloqueia fechar o pai durante execução
+            if (showExecutionModal) return;
             onClose();
         }}
         title={`Detalhes da OS: ${liveOS.title}`}>
         <div className="flex flex-col h-full max-h-[85vh]">
           <div className="flex-1 overflow-y-auto space-y-6 p-2 custom-scrollbar">
+            
             {/* Cabeçalho */}
             <div className="flex flex-col gap-2 bg-gray-50 dark:bg-gray-700/50 p-3 rounded-lg">
               <div className="flex justify-between items-center">
@@ -254,13 +255,21 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                 </div>
 
                 <div className="flex gap-1">
+                  {/* ✅ BOTÃO DOWNLOAD MODIFICADO (ZIP) */}
                   <button
-                    onClick={handleDownloadPDF}
+                    onClick={handleDownloadPackage}
                     disabled={isDownloading}
-                    className="p-2 text-gray-600 hover:text-blue-600 dark:text-gray-300 transition-colors"
-                    title="Baixar PDF"
+                    className="p-2 text-gray-600 hover:text-blue-600 dark:text-gray-300 transition-colors flex items-center gap-1"
+                    title="Baixar Pacote (Relatório + Evidências)"
                   >
-                    {isDownloading ? <span className="animate-spin">⌛</span> : <Download size={20} />}
+                    {isDownloading ? (
+                        <span className="animate-spin">⌛</span> 
+                    ) : (
+                        <div className="relative">
+                            <Download size={20} />
+                            <span className="absolute -bottom-1 -right-2 text-[8px] bg-blue-600 text-white px-1 rounded font-bold">ZIP</span>
+                        </div>
+                    )}
                   </button>
 
                   {canEdit && (
@@ -290,7 +299,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
               </div>
             </div>
 
-            {/* Info */}
+            {/* Info Básica */}
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase">Usina</label>
@@ -354,7 +363,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
               </div>
             </div>
 
-            {/* Botão de ação */}
+            {/* Botão de Iniciar Execução */}
             <div className="border-t dark:border-gray-700 pt-4">
               {liveOS.status === OSStatus.COMPLETED ? (
                 <div className="w-full py-3 bg-green-100 text-green-800 rounded-lg text-center font-bold flex items-center justify-center gap-2">

@@ -1,7 +1,8 @@
 # /attachments/app/routes/plants.py
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-from typing import List
+from sqlalchemy import or_  # Adicionado para filtro de busca
+from typing import List, Optional  # Adicionado Optional
 from uuid import uuid4
 import unicodedata
 from app.core.database import get_db
@@ -83,8 +84,21 @@ def _update_users_from_assignments_payload(db: Session, plant_id: str, ap: Assig
 # --- ROTAS ---
 
 @router.get("", response_model=List[PlantOut])
-def list_plants(db: Session = Depends(get_db)):
-    plants = db.query(models.Plant).all()
+def list_plants(search: Optional[str] = None, db: Session = Depends(get_db)):
+    # CORREÇÃO POSTGRES: Adicionada lógica de busca Case Insensitive com .ilike
+    query = db.query(models.Plant)
+    
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                models.Plant.name.ilike(search_term),
+                models.Plant.client.ilike(search_term)
+            )
+        )
+        
+    plants = query.all()
+    
     # Convertemos para dicionário para poder injetar os assignments calculados
     results = []
     for p in plants:

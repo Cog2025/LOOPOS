@@ -4,31 +4,32 @@ import autoTable from 'jspdf-autotable';
 import { format, isValid } from 'date-fns';
 import { OS, PlantMaintenancePlan, TaskTemplate } from '../../types';
 
-// 🔥 DEFINIÇÃO DO SERVIDOR
+// 🔥 CONFIGURAÇÃO DO SERVIDOR
 import { API_BASE } from './config';
-//const API_BASE = 'http://192.168.18.165:8000';
 
 // --- HELPERS ---
+
+const isImageFile = (url?: string) => {
+    if (!url) return false;
+    // Remove query params e converte para minúsculo
+    const clean = url.split('?')[0].toLowerCase();
+    // Lista de extensões suportadas pelo jsPDF
+    return clean.match(/\.(jpeg|jpg|gif|png|webp|bmp)$/) != null;
+};
 
 const resolveAssetUrl = (u?: string) => {
     if (!u) return '';
     if (u.startsWith('data:')) return u;
     
-    // Remove espaços extras que podem quebrar a URL
     let cleanPath = u.trim();
-
-    // Se já for absoluta (http/https), retorna codificada
     if (cleanPath.startsWith('http')) {
         return encodeURI(cleanPath);
     }
     
-    // Garante que começa com /
     if (!cleanPath.startsWith('/')) {
         cleanPath = `/${cleanPath}`;
     }
 
-    // Monta a URL e codifica apenas a parte do caminho/arquivo
-    // (Evita codificar os :// do http)
     const fullUrl = `${API_BASE}${cleanPath}`;
     return encodeURI(fullUrl);
 };
@@ -77,6 +78,12 @@ interface ImageData {
 
 const getImageData = (url: string): Promise<ImageData | null> => {
   return new Promise((resolve) => {
+    // 🔥 Proteção: Se não for imagem, retorna null imediatamente
+    if (!isImageFile(url)) {
+        resolve(null);
+        return;
+    }
+
     const img = new Image();
     img.crossOrigin = 'Anonymous'; 
     img.src = url;
@@ -94,7 +101,6 @@ const getImageData = (url: string): Promise<ImageData | null> => {
       });
     };
 
-    // 🔥 LOG DE ERRO PARA DEBUG NO CELULAR
     img.onerror = () => {
         console.warn(`❌ [PDF] Erro ao baixar imagem: ${url}`);
         resolve(null);
@@ -108,14 +114,8 @@ interface ReportHelpers {
 }
 
 const ASSET_COLORS = [
-    [41, 128, 185],  // Azul
-    [39, 174, 96],   // Verde
-    [192, 57, 43],   // Vermelho
-    [230, 126, 34],  // Laranja
-    [142, 68, 173],  // Roxo
-    [44, 62, 80],    // Cinza Escuro
-    [211, 84, 0],    // Abóbora
-    [22, 160, 133],  // Verde Mar
+    [41, 128, 185], [39, 174, 96], [192, 57, 43], [230, 126, 34],
+    [142, 68, 173], [44, 62, 80], [211, 84, 0], [22, 160, 133],
 ];
 
 // --- 1. RELATÓRIO COMPLETO DE MANUTENÇÃO (PLANOS) ---
@@ -222,40 +222,14 @@ export const generateFullMaintenancePDF = (
 
       autoTable(doc, {
         startY: titleY + 5,
-        head: [[
-          'Tarefa', 
-          'Checklist (Subtarefas)', 
-          'Tipo', 
-          'Freq.', 
-          'Duração', 
-          'Inativ.',
-          'Critic.', 
-          'Class. 1', 
-          'Class. 2'
-        ]],
+        head: [['Tarefa', 'Checklist', 'Tipo', 'Freq.', 'Duração', 'Inativ.', 'Critic.', 'Class. 1', 'Class. 2']],
         body: tableBody,
-        styles: { 
-          fontSize: 8,           
-          cellPadding: 3,
-          valign: 'top',         
-          overflow: 'linebreak'  
-        },
-        headStyles: {
-          fillColor: color,
-          textColor: 255,
-          fontStyle: 'bold',
-          halign: 'center'
-        },
+        styles: { fontSize: 8, cellPadding: 3, valign: 'top', overflow: 'linebreak' },
+        headStyles: { fillColor: color, textColor: 255, fontStyle: 'bold', halign: 'center' },
         columnStyles: {
           0: { cellWidth: 40, fontStyle: 'bold' },
           1: { cellWidth: 80 },
-          2: { cellWidth: 25 },
-          3: { cellWidth: 20, halign: 'center' },
-          4: { cellWidth: 15, halign: 'center' },
-          5: { cellWidth: 15, halign: 'center' },
           6: { cellWidth: 20, halign: 'center' },
-          7: { cellWidth: 25 },
-          8: { cellWidth: 25 }
         },
         didParseCell: (data) => {
             if (data.section === 'body' && data.column.index === 6) { 
@@ -278,11 +252,7 @@ export const generateFullMaintenancePDF = (
   }
 
   const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-  
-  if (shouldSave) {
-    doc.save(`${safeTitle}.pdf`);
-  }
-  
+  if (shouldSave) doc.save(`${safeTitle}.pdf`);
   return doc; 
 };
 
@@ -388,30 +358,39 @@ export const generateOSReport = async (
 
             for (const img of itemImages) {
               if (img.url) {
-                // 🔥 LOG DE DEBUG PARA URL DA IMAGEM
                 const fullUrl = resolveAssetUrl(img.url);
-                console.log(`📷 Tentando baixar: ${fullUrl}`);
-
-                const imgData = await getImageData(fullUrl);
                 
-                if (imgData) {
-                  if (xImg + maxImgWidth > 200) { xImg = 14; yPos += maxRowHeight + 10; maxRowHeight = 0; }
-                  if (yPos + maxImgHeight + 10 > 280) { doc.addPage(); yPos = 20; xImg = 14; maxRowHeight = 0; }
-                  
-                  const ratio = Math.min(maxImgWidth / imgData.width, maxImgHeight / imgData.height);
-                  const finalW = imgData.width * ratio;
-                  const finalH = imgData.height * ratio;
-                  const offsetX = xImg + (maxImgWidth - finalW) / 2;
-                  
-                  try { doc.addImage(imgData.base64, 'JPEG', offsetX, yPos, finalW, finalH); } catch(e) { console.error(e); }
-                  
-                  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-                  const fName = doc.splitTextToSize(img.fileName || 'Foto', maxImgWidth);
-                  doc.text(fName, xImg, yPos + maxImgHeight + 4);
+                // 🔥 NOVA LÓGICA: SE FOR IMAGEM, DESENHA. SE NÃO, TEXTO AZUL
+                if (isImageFile(fullUrl)) {
+                    const imgData = await getImageData(fullUrl);
+                    if (imgData) {
+                        if (xImg + maxImgWidth > 200) { xImg = 14; yPos += maxRowHeight + 10; maxRowHeight = 0; }
+                        if (yPos + maxImgHeight + 10 > 280) { doc.addPage(); yPos = 20; xImg = 14; maxRowHeight = 0; }
+                        
+                        const ratio = Math.min(maxImgWidth / imgData.width, maxImgHeight / imgData.height);
+                        const finalW = imgData.width * ratio;
+                        const finalH = imgData.height * ratio;
+                        const offsetX = xImg + (maxImgWidth - finalW) / 2;
+                        
+                        try { doc.addImage(imgData.base64, 'JPEG', offsetX, yPos, finalW, finalH); } catch(e) { console.error(e); }
+                        
+                        doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+                        const fName = doc.splitTextToSize(img.fileName || 'Foto', maxImgWidth);
+                        doc.text(fName, xImg, yPos + maxImgHeight + 4);
 
-                  const totalH = maxImgHeight + (fName.length * 3) + 5;
-                  if (totalH > maxRowHeight) maxRowHeight = totalH;
-                  xImg += maxImgWidth + gap;
+                        const totalH = maxImgHeight + (fName.length * 3) + 5;
+                        if (totalH > maxRowHeight) maxRowHeight = totalH;
+                        xImg += maxImgWidth + gap;
+                    }
+                } else {
+                    // É VÍDEO OU ARQUIVO: MOSTRA PLACEHOLDER
+                    if (yPos > 270) { doc.addPage(); yPos = 20; }
+                    doc.setFontSize(9);
+                    doc.setTextColor(0, 0, 255); // Azul
+                    const fileName = img.fileName || 'Arquivo anexo';
+                    doc.text(`[ARQUIVO ANEXO NO ZIP]: ${fileName}`, 14, yPos + 5);
+                    yPos += 8;
+                    doc.setTextColor(0);
                 }
               }
             }
@@ -423,7 +402,7 @@ export const generateOSReport = async (
         yPos += 5;
       }
 
-      // Fotos Gerais
+      // Fotos Gerais (Com a mesma lógica)
       const generalImages = os.imageAttachments?.filter(img => !img.caption?.startsWith('Item ')) || [];
       if (generalImages.length > 0) {
         if (yPos > 240) { doc.addPage(); yPos = 20; }
@@ -435,29 +414,37 @@ export const generateOSReport = async (
         for (const img of generalImages) {
           if (img.url) {
             const fullUrl = resolveAssetUrl(img.url);
-            console.log(`📷 Tentando baixar Geral: ${fullUrl}`); // Log
-
-            const imgData = await getImageData(fullUrl);
             
-            if (imgData) {
-               if (xImg + maxImgWidth > 200) { xImg = 14; yPos += maxRowHeight + 10; maxRowHeight = 0; }
-               if (yPos + maxImgHeight + 10 > 280) { doc.addPage(); yPos = 20; xImg = 14; maxRowHeight = 0; }
-               
-               const ratio = Math.min(maxImgWidth / imgData.width, maxImgHeight / imgData.height);
-               const finalW = imgData.width * ratio;
-               const finalH = imgData.height * ratio;
-               const offsetX = xImg + (maxImgWidth - finalW) / 2;
-               
-               try { doc.addImage(imgData.base64, 'JPEG', offsetX, yPos, finalW, finalH); } catch (e) { console.error(e); }
-               
-               doc.setFontSize(8);
-               const splitN = doc.splitTextToSize(img.fileName || 'Geral', maxImgWidth);
-               doc.text(splitN, xImg, yPos + maxImgHeight + 4);
-               
-               const totalH = maxImgHeight + (splitN.length * 3) + 5;
-               if (totalH > maxRowHeight) maxRowHeight = totalH;
-               
-               xImg += maxImgWidth + gap;
+            if (isImageFile(fullUrl)) {
+                const imgData = await getImageData(fullUrl);
+                if (imgData) {
+                   if (xImg + maxImgWidth > 200) { xImg = 14; yPos += maxRowHeight + 10; maxRowHeight = 0; }
+                   if (yPos + maxImgHeight + 10 > 280) { doc.addPage(); yPos = 20; xImg = 14; maxRowHeight = 0; }
+                   
+                   const ratio = Math.min(maxImgWidth / imgData.width, maxImgHeight / imgData.height);
+                   const finalW = imgData.width * ratio;
+                   const finalH = imgData.height * ratio;
+                   const offsetX = xImg + (maxImgWidth - finalW) / 2;
+                   
+                   try { doc.addImage(imgData.base64, 'JPEG', offsetX, yPos, finalW, finalH); } catch (e) { console.error(e); }
+                   
+                   doc.setFontSize(8);
+                   const splitN = doc.splitTextToSize(img.fileName || 'Geral', maxImgWidth);
+                   doc.text(splitN, xImg, yPos + maxImgHeight + 4);
+                   
+                   const totalH = maxImgHeight + (splitN.length * 3) + 5;
+                   if (totalH > maxRowHeight) maxRowHeight = totalH;
+                   
+                   xImg += maxImgWidth + gap;
+                }
+            } else {
+                if (yPos > 270) { doc.addPage(); yPos = 20; }
+                doc.setFontSize(9);
+                doc.setTextColor(0, 0, 255);
+                const fileName = img.fileName || 'Arquivo anexo';
+                doc.text(`[ARQUIVO ANEXO NO ZIP]: ${fileName}`, 14, yPos + 5);
+                yPos += 8;
+                doc.setTextColor(0);
             }
           }
         }

@@ -89,13 +89,11 @@ def delete_template(
 
 @router.get("/plant-plans/{plant_id}")
 def get_plant_plan(plant_id: str, db: Session = Depends(get_db)):
-    # Busca tarefas ativas (True ou 1)
+    # Busca tarefas ativas
+    # CORREÇÃO POSTGRES: Usar apenas .is_(True). Removemos o "OR active == 1"
     return db.query(models.PlantMaintenancePlan).filter(
         models.PlantMaintenancePlan.plantId == plant_id,
-        or_(
-            models.PlantMaintenancePlan.active.is_(True),
-            models.PlantMaintenancePlan.active == 1
-        )
+        models.PlantMaintenancePlan.active.is_(True)
     ).all()
 
 @router.post("/plant-plans/{plant_id}/init")

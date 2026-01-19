@@ -7,7 +7,7 @@
 import { Capacitor } from '@capacitor/core';
 
 // 1. URL do Cloudflare (Para acessar de qualquer lugar: 4G, 5G, Wi-Fi fora de casa)
-const CLOUDFLARE_URL = "https://reasonably-proteins-announces-wisconsin.trycloudflare.com";
+const CLOUDFLARE_URL = "https://cause-greetings-pick-comics.trycloudflare.com";
 
 // 2. IP da sua Rede (Para acessar super rápido via Wi-Fi em casa)
 // ⚠️ IMPORTANTE: Nunca use 'localhost' aqui. Use o IP do PC (192.168...)

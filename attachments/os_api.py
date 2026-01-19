@@ -10,6 +10,7 @@ from uuid import uuid4
 import base64
 import os
 import shutil
+import re
 from pathlib import Path
 
 # --- CONFIGURAÇÃO DE DIRETÓRIOS ---
@@ -19,6 +20,14 @@ ATTACHMENTS_DIR = BASE_DIR / "images"
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 print(f"📸 [INIT API] Diretório base de imagens: {ATTACHMENTS_DIR}")
+
+# --- HELPER: Limpar nome de pasta (Segurança) ---
+def sanitize_foldername(name: str) -> str:
+    """Remove caracteres inválidos para pastas do Windows/Linux"""
+    # Remove caracteres especiais, mantém letras, números, espaço, traço e underline
+    cleaned = re.sub(r'[^\w\s-]', '', name).strip()
+    # Limita tamanho para evitar erros de path longo
+    return cleaned[:60] or "Geral" # Aumentei um pouco para caber nomes maiores
 
 # --- MODELO DE DADOS ---
 class OSModel(BaseModel):
@@ -64,6 +73,8 @@ router = APIRouter()
 def save_base64_image(base64_str: str, filename: str, os_id: str) -> str:
     """
     Decodifica Base64 e salva dentro da pasta específica da OS (ex: images/OS0002/arquivo.jpg)
+    Nota: Para uploads via Base64 (Offline), ainda salvamos na raiz da OS por enquanto, 
+    pois o payload offline atual não envia a legenda separada para processarmos a subpasta aqui.
     """
     try:
         if "base64," in base64_str:
@@ -97,7 +108,6 @@ def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[D
         # Se for Base64 (vindo do App Offline), salva no disco
         if url.startswith("data:"):
             filename = att.get("fileName", f"upload_{int(datetime.now().timestamp())}.jpg")
-            # 🔥 Passamos o os_id para criar a subpasta
             new_url = save_base64_image(url, filename, os_id)
             if new_url:
                 att["url"] = new_url
@@ -113,19 +123,25 @@ def cleanup_deleted_files(os_id: str, old_list: List[Dict], new_list: List[Dict]
     
     for url in deleted_urls:
         try:
-            # A URL é /attachments/images/OS0002/arquivo.jpg
-            # Precisamos converter para caminho físico
-            parts = url.split("/")
-            if len(parts) >= 4:
-                filename = parts[-1]
-                folder_os = parts[-2] # Deve ser o ID da OS
+            # A URL é /attachments/images/OS0002/Subtarefa_1/arquivo.jpg
+            # Precisamos remover o prefixo /attachments/images/ para ter o caminho relativo físico
+            relative_path = url.replace("/attachments/images/", "").strip("/")
+            
+            # Reconstrói o caminho completo físico
+            file_path = ATTACHMENTS_DIR / relative_path
+            
+            if file_path.exists():
+                os.remove(file_path)
+                print(f"🗑️ Arquivo deletado: {file_path}")
                 
-                # Garante que só apaga se estiver dentro da pasta da OS certa
-                if folder_os == os_id:
-                    file_path = ATTACHMENTS_DIR / os_id / filename
-                    if file_path.exists():
-                        os.remove(file_path)
-                        print(f"🗑️ Arquivo deletado: {file_path}")
+                # Opcional: Tentar remover a subpasta (Subtarefa_X) se ficar vazia
+                parent_dir = file_path.parent
+                if parent_dir != ATTACHMENTS_DIR and not any(parent_dir.iterdir()):
+                    try:
+                        parent_dir.rmdir()
+                        print(f"📂 Pasta vazia removida: {parent_dir}")
+                    except: pass
+
         except Exception as e:
             print(f"⚠️ Erro ao deletar arquivo {url}: {e}")
 
@@ -233,22 +249,37 @@ def upload_attachments(
     x_user_id: str = Header(None),
     db: Session = Depends(get_db)
 ):
-    print(f"🚀 [DEBUG UPLOAD] Recebendo {len(files)} arquivos para OS: {os_id}")
+    print(f"🚀 [DEBUG UPLOAD] Recebendo {len(files)} arquivos para OS: {os_id}, Legenda: {caption}")
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
 
     user = db.query(models.User).filter(models.User.id == x_user_id).first()
     uploader_name = user.name if user else "Desconhecido"
 
-    # 🔥 Cria pasta da OS se não existir
-    os_folder = ATTACHMENTS_DIR / os_id
-    os_folder.mkdir(parents=True, exist_ok=True)
+    # --- LÓGICA DE PASTAS FÍSICAS (CORRIGIDA) ---
+    # 1. Define o nome da subpasta. Padrão = "Geral"
+    subfolder_name = "Geral"
+    
+    # 2. Se a legenda contiver "Item X", renomeia para "Subtarefa X"
+    # Ex: "Item 1 - Verificar cabos" -> "Subtarefa 1 - Verificar cabos"
+    if "Item" in caption:
+        # Substitui "Item" por "Subtarefa" na string base
+        replaced_caption = caption.replace("Item", "Subtarefa")
+        # Limpa caracteres inválidos para pasta
+        subfolder_name = sanitize_foldername(replaced_caption)
+    elif caption and caption != "Foto Geral":
+        # Se for outra legenda personalizada, usa ela limpa
+        subfolder_name = sanitize_foldername(caption)
+    
+    # 3. Cria estrutura de pastas: images/OS1234/Subtarefa_1_Verificar...
+    target_folder = ATTACHMENTS_DIR / os_id / subfolder_name
+    target_folder.mkdir(parents=True, exist_ok=True)
 
     new_attachments = []
     
     for file in files:
         safe_filename = f"{uuid4()}_{file.filename.replace(' ', '_')}"
-        file_path = os_folder / safe_filename
+        file_path = target_folder / safe_filename
         
         print(f"💾 [DEBUG UPLOAD] Salvando físico em: {file_path}")
         with open(file_path, "wb") as buffer:
@@ -256,10 +287,10 @@ def upload_attachments(
             
         new_attachments.append({
             "id": f"img-{int(datetime.now().timestamp()*1000)}",
-            # A URL deve refletir a subpasta da OS
-            "url": f"/attachments/images/{os_id}/{safe_filename}",
+            # A URL pública inclui a subpasta para que o frontend consiga baixar depois
+            "url": f"/attachments/images/{os_id}/{subfolder_name}/{safe_filename}",
             "fileName": file.filename,
-            "caption": caption,
+            "caption": caption, # Mantém a legenda original ("Item 1") para exibição no PDF
             "uploadedBy": uploader_name,
             "uploadedAt": datetime.now().isoformat()
         })

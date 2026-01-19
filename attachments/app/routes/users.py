@@ -1,6 +1,6 @@
 # /attachments/app/routes/users.py
 from fastapi import APIRouter, HTTPException, Depends, Request
-from typing import List
+from typing import List, Optional # Adicionado Optional
 from sqlalchemy.orm import Session
 from uuid import uuid4
 from app.core.database import get_db
@@ -10,8 +10,14 @@ from app.core.schemas import UserCreate, UserUpdate, UserOut
 router = APIRouter(tags=["users"])
 
 @router.get("", response_model=List[UserOut])
-def list_users(db: Session = Depends(get_db)):
-    return db.query(models.User).all()
+def list_users(search: Optional[str] = None, db: Session = Depends(get_db)):
+    # CORREÇÃO POSTGRES: Busca Case Insensitive
+    query = db.query(models.User)
+    
+    if search:
+        query = query.filter(models.User.name.ilike(f"%{search}%"))
+        
+    return query.all()
     
 @router.post("", response_model=UserOut, status_code=201)
 def create_user(payload: UserCreate, db: Session = Depends(get_db)):
