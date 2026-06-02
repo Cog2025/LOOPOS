@@ -8,6 +8,7 @@ import { OS, Role, Priority, OSStatus } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useData } from '../../contexts/DataContext';
 import { useOffline } from '../../contexts/OfflineContext';
+import { useCan } from '../hooks/useCan';
 
 import OSExecutionModal from './OSExecutionModal';
 
@@ -43,6 +44,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   const { user } = useAuth();
   const { deleteOSBatch, addOSLog, users, plants, osList, reloadFromAPI } = useData();
   const { isOnline, saveOfflineAction } = useOffline();
+  const can = useCan();
 
   const [newLog, setNewLog] = useState('');
   const [showExecutionModal, setShowExecutionModal] = useState(false);
@@ -122,6 +124,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
 
   const executionPermission = useMemo(() => {
     if (!user) return { allowed: false, reason: 'Usuário não logado' };
+    if (!can('os.executar')) return { allowed: false, reason: 'Acesso negado (RBAC)' };
     if (liveOS.status === OSStatus.COMPLETED) return { allowed: false, reason: 'OS Finalizada' };
     if (user.role === Role.ADMIN || user.role === Role.OPERATOR) return { allowed: true, reason: '' };
 
@@ -139,7 +142,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
 
     const isAssigned = liveOS.technicianId === user.id || liveOS.assistantId === user.id;
     return { allowed: isAssigned, reason: isAssigned ? '' : 'Somente a equipe escalada' };
-  }, [user, liveOS]);
+  }, [user, liveOS, can]);
 
   // ✅ NOVA FUNÇÃO DE DOWNLOAD DE PACOTE (PDF + ANEXOS + VÍDEOS)
   const handleDownloadPackage = async () => {
@@ -202,15 +205,8 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
     }
   };
 
-  const canEdit =
-    user?.role === Role.ADMIN ||
-    user?.role === Role.OPERATOR ||
-    (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
-
-  const canDelete =
-    user?.role === Role.ADMIN ||
-    user?.role === Role.OPERATOR ||
-    (user?.role === Role.COORDINATOR && currentPlant?.coordinatorId === user.id);
+  const canEdit = can('os.editar');
+  const canDelete = can('os.excluir');
 
   if (!isOpen) return null;
 
@@ -256,6 +252,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
 
                 <div className="flex gap-1">
                   {/* ✅ BOTÃO DOWNLOAD MODIFICADO (ZIP) */}
+                  {can('os.baixar') && (
                   <button
                     onClick={handleDownloadPackage}
                     disabled={isDownloading}
@@ -271,6 +268,7 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                         </div>
                     )}
                   </button>
+                  )}
 
                   {canEdit && (
                     <button

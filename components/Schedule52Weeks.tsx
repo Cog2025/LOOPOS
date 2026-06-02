@@ -7,15 +7,46 @@ import { useAuth } from '../contexts/AuthContext';
 import Modal from './modals/Modal';
 import ScheduleOSModal from './modals/ScheduleOSModal'; 
 import { DashboardContextType } from './Dashboard';
-import { Filter, ChevronDown, ChevronUp } from 'lucide-react'; // ✅ Ícones novos
+import { Filter, ChevronDown, ChevronUp, Clock } from 'lucide-react'; // ✅ Ícones novos
+import { useOSList } from './hooks/useOSList';
+import { useCan } from './hooks/useCan';
+import { Skeleton } from './ui/Skeleton';
 
 const Schedule52Weeks: React.FC = () => {
-  const { filteredOSList, searchTerm, openModal } = useOutletContext<DashboardContextType>();
+  const { searchTerm, openModal } = useOutletContext<DashboardContextType>();
+  
+  const { data, isLoading } = useOSList(1, 1000);
+  const rawOSList = data?.items || [];
   
   const onCardClick = (os: OS) => openModal('OS_DETAIL', { os });
 
   const { plants, users, filterOSForUser, deleteOSBatch } = useData();
   const { user } = useAuth();
+
+  const filteredOSList = React.useMemo(() => {
+    if (!searchTerm?.trim()) return rawOSList;
+    const lowerTerm = searchTerm.toLowerCase();
+
+    return rawOSList.filter(os => {
+        const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
+        const techName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
+        const osTitle = os.title.toLowerCase();
+        const osId = os.id.toLowerCase();
+        const osDesc = os.description?.toLowerCase() || '';
+        const assetsStr = os.assets 
+            ? os.assets.join(' ').toLowerCase() 
+            : ((os as any).assetName || '').toLowerCase();
+
+        return (
+            osTitle.includes(lowerTerm) ||
+            osId.includes(lowerTerm) ||
+            plantName.includes(lowerTerm) ||
+            techName.includes(lowerTerm) ||
+            osDesc.includes(lowerTerm) ||
+            assetsStr.includes(lowerTerm)
+        );
+    });
+  }, [rawOSList, searchTerm, plants, users]);
 
   // Estados de Filtro
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -36,7 +67,7 @@ const Schedule52Weeks: React.FC = () => {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedOSIds, setSelectedOSIds] = useState<string[]>([]);
    
-  const canManage = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
+  const can = useCan();
   const years = [2024, 2025, 2026, 2027];
 
   // --- LÓGICAS DE FILTRO E MEMO (Mantidas idênticas) ---
@@ -131,6 +162,13 @@ const Schedule52Weeks: React.FC = () => {
     return grouped;
   }, [visibleOS, selectedYear]);
 
+  // Lista de usinas visíveis para gerar as linhas da tabela
+  const plantsInView = useMemo(() => {
+     const pIds = new Set<string>();
+     visibleOS.forEach(os => pIds.add(os.plantId));
+     return Array.from(pIds).sort((a,b) => getPlantName(a).localeCompare(getPlantName(b)));
+  }, [visibleOS]);
+
   const toggleSelection = (id: string) => {
       setSelectedOSIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
@@ -179,6 +217,23 @@ const Schedule52Weeks: React.FC = () => {
 
   const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1.5 px-3 w-full lg:w-auto";
 
+  if (isLoading) {
+    return (
+      <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
+        <div className="flex-none p-4 pb-0 bg-gray-50 dark:bg-gray-900 z-10">
+          <Skeleton className="h-16 w-full rounded-lg" />
+        </div>
+        <div className="flex-1 p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {[...Array(15)].map((_, i) => (
+              <Skeleton key={i} className="h-40 w-full rounded-lg" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
       
@@ -206,30 +261,30 @@ const Schedule52Weeks: React.FC = () => {
 
                 {/* Botões de Ação (Sempre visíveis ou adaptados) */}
                 <div className="flex gap-2 w-full sm:w-auto justify-end">
-                    {canManage && (
-                        <>
-                            {isSelectionMode ? (
-                                <div className="flex gap-2 animate-fadeIn items-center w-full justify-end">
-                                    <label className="flex items-center space-x-2 cursor-pointer bg-blue-50 dark:bg-slate-700 px-3 py-1.5 rounded border dark:border-gray-600">
-                                        <input type="checkbox" checked={selectedOSIds.length === visibleOS.length && visibleOS.length > 0} onChange={handleSelectAll} className="rounded text-blue-600 w-4 h-4" />
-                                        <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Todos</span>
-                                    </label>
-                                    <button onClick={handleDeleteSelected} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 disabled:bg-gray-400">
-                                        🗑️
-                                    </button>
-                                    <button onClick={() => setIsSelectionMode(false)} className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-200 rounded shadow-sm hover:bg-gray-300">
-                                        X
-                                    </button>
-                                </div>
-                            ) : (
-                                <button onClick={() => setIsSelectionMode(true)} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded shadow-sm hover:bg-blue-700 flex items-center gap-2">
-                                    ✏️ <span className="hidden sm:inline">Gerenciar</span>
+                    {can('os.excluir') && (
+                        isSelectionMode ? (
+                            <div className="flex gap-2 animate-fadeIn items-center w-full justify-end">
+                                <label className="flex items-center space-x-2 cursor-pointer bg-blue-50 dark:bg-slate-700 px-3 py-1.5 rounded border dark:border-gray-600">
+                                    <input type="checkbox" checked={selectedOSIds.length === visibleOS.length && visibleOS.length > 0} onChange={handleSelectAll} className="rounded text-blue-600 w-4 h-4" />
+                                    <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Todos</span>
+                                </label>
+                                <button onClick={handleDeleteSelected} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 disabled:bg-gray-400">
+                                    🗑️
                                 </button>
-                            )}
-                            <button onClick={() => setIsSchedulerOpen(true)} className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded shadow-sm hover:bg-green-700 flex items-center gap-2">
-                                + <span className="hidden sm:inline">Agendar</span>
+                                <button onClick={() => setIsSelectionMode(false)} className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-200 rounded shadow-sm hover:bg-gray-300">
+                                    X
+                                </button>
+                            </div>
+                        ) : (
+                            <button onClick={() => setIsSelectionMode(true)} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded shadow-sm hover:bg-blue-700 flex items-center gap-2">
+                                ✏️ <span className="hidden sm:inline">Gerenciar</span>
                             </button>
-                        </>
+                        )
+                    )}
+                    {can('os.criar') && (
+                        <button onClick={() => setIsSchedulerOpen(true)} className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded shadow-sm hover:bg-green-700 flex items-center gap-2">
+                            + <span className="hidden sm:inline">Agendar</span>
+                        </button>
                     )}
                 </div>
             </div>
@@ -251,60 +306,77 @@ const Schedule52Weeks: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. ÁREA DE ROLAGEM */}
-      <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 pb-10">
-            {weeks.map(w => {
-                const items = osByWeek[w.weekNumber] || [];
-                const visibleLimit = 3;
-                const visibleItems = items.slice(0, visibleLimit);
-                const hiddenCount = items.length - visibleLimit;
+      {/* 2. ÁREA DE ROLAGEM E TABELA RESPONSIVA */}
+      <div className="flex-1 overflow-auto p-4 scrollbar-thin relative bg-white dark:bg-gray-800">
+        <table className="w-max min-w-full border-collapse text-sm">
+          <thead className="sticky top-0 z-20 shadow-sm">
+             <tr>
+               <th className="sticky left-0 z-30 bg-gray-200 dark:bg-gray-700 p-2 border border-gray-300 dark:border-gray-600 w-48 text-left text-gray-800 dark:text-gray-200">
+                  Usina / Local
+               </th>
+               {weeks.map(w => (
+                 <th key={w.weekNumber} className="bg-gray-100 dark:bg-gray-800 p-2 border border-gray-300 dark:border-gray-600 min-w-[140px] text-center text-gray-700 dark:text-gray-300">
+                    <span className="block font-bold">SEM {w.weekNumber}</span>
+                    <span className="text-[10px] opacity-70 font-normal">{formatDate(w.start)} - {formatDate(w.end)}</span>
+                 </th>
+               ))}
+             </tr>
+          </thead>
+          <tbody>
+            {plantsInView.map(plantId => (
+                 <tr key={plantId} className="hover:bg-gray-50 dark:hover:bg-gray-750">
+                   <td className="sticky left-0 z-10 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 p-2 font-bold text-gray-800 dark:text-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                      {getPlantName(plantId)}
+                   </td>
+                   {weeks.map(w => {
+                      const items = (osByWeek[w.weekNumber] || []).filter(os => os.plantId === plantId);
+                      const visibleLimit = 3;
+                      const visibleItems = items.slice(0, visibleLimit);
+                      const hiddenCount = items.length - visibleLimit;
 
-                return (
-                    <div key={w.weekNumber} className={`border dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg p-2 min-h-[160px] flex flex-col shadow-sm transition-colors ${isSelectionMode ? 'hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer' : ''}`}>
-                        <div className="text-sm text-center text-gray-700 dark:text-gray-300 border-b dark:border-gray-700 mb-2 pb-1">
-                            <span className="font-bold block">SEM {w.weekNumber}</span> 
-                            <span className="text-xs opacity-75">{formatDate(w.start)} - {formatDate(w.end)}</span>
-                        </div>
-                        
-                        <div className="flex-1 flex flex-col gap-1.5 overflow-hidden">
-                            {visibleItems.map(os => {
-                                const isSelected = selectedOSIds.includes(os.id);
-                                return (
+                      return (
+                        <td key={w.weekNumber} className="border border-gray-300 dark:border-gray-600 p-1 align-top bg-white dark:bg-gray-800/50">
+                            <div className="flex flex-col gap-1.5 overflow-hidden">
+                                {visibleItems.map(os => {
+                                    const isSelected = selectedOSIds.includes(os.id);
+                                    return (
+                                        <div 
+                                            key={os.id} 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                isSelectionMode ? toggleSelection(os.id) : onCardClick(os);
+                                            }}
+                                            className={`text-xs px-2 py-1.5 rounded text-white cursor-pointer truncate flex flex-col justify-center shadow-sm transition-all ${
+                                                isSelectionMode && isSelected ? 'ring-2 ring-red-500 bg-red-500 scale-95' : 
+                                                getPriorityColor(os.priority)
+                                            }`}
+                                            title={`${getPlantName(os.plantId)} - ${os.activity}`}
+                                        >
+                                            <span className="font-bold truncate text-[10px] sm:text-xs">{os.id.slice(-6).toUpperCase()}</span>
+                                            <span className="truncate opacity-90 text-[10px] sm:text-[11px]">{os.activity}</span>
+                                        </div>
+                                    );
+                                })}
+
+                                {hiddenCount > 0 && (
                                     <div 
-                                        key={os.id} 
+                                        className="mt-auto text-[10px] sm:text-xs text-center text-blue-600 dark:text-blue-400 font-bold cursor-pointer bg-blue-50 dark:bg-gray-700 hover:bg-blue-100 dark:hover:bg-gray-600 rounded py-1 transition-colors"
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            isSelectionMode ? toggleSelection(os.id) : onCardClick(os);
+                                            handleShowMore(w.weekNumber, items);
                                         }}
-                                        className={`text-xs px-2 py-1.5 rounded text-white cursor-pointer truncate flex flex-col justify-center shadow-sm transition-all ${
-                                            isSelectionMode && isSelected ? 'ring-2 ring-red-500 bg-red-500 scale-95' : 
-                                            getPriorityColor(os.priority)
-                                        }`}
-                                        title={`${getPlantName(os.plantId)} - ${os.activity}`}
                                     >
-                                        <span className="font-bold truncate text-xs">{getPlantName(os.plantId)}</span>
-                                        <span className="truncate opacity-90 text-[11px]">{os.activity}</span>
+                                        + {hiddenCount} mais...
                                     </div>
-                                );
-                            })}
-
-                            {hiddenCount > 0 && (
-                                <div 
-                                    className="mt-auto text-xs text-center text-blue-600 dark:text-blue-400 font-bold cursor-pointer bg-blue-50 dark:bg-gray-700 hover:bg-blue-100 dark:hover:bg-gray-600 rounded py-1 transition-colors"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleShowMore(w.weekNumber, items);
-                                    }}
-                                >
-                                    + {hiddenCount} mais...
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )
-            })}
-        </div>
+                                )}
+                            </div>
+                        </td>
+                      )
+                   })}
+                 </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* MODAL VER MAIS (MANTIDO IGUAL) */}

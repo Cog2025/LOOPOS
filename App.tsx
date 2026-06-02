@@ -5,6 +5,15 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { DataProvider } from './contexts/DataContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { OfflineProvider } from './contexts/OfflineContext';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutes
+    },
+  },
+});
 
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
@@ -14,6 +23,7 @@ import Board from './components/Board';
 import Calendar from './components/Calendar';
 import Schedule52Weeks from './components/Schedule52Weeks';
 import MaintenancePlans from './components/MaintenancePlans';
+import AdminPermissoes from './components/AdminPermissoes';
 
 const AppContent: React.FC = () => {
   const { user } = useAuth();
@@ -32,6 +42,7 @@ const AppContent: React.FC = () => {
          <Route path="calendar" element={<Calendar />} />
          <Route path="schedule" element={<Schedule52Weeks />} />
          <Route path="plans" element={<MaintenancePlans />} />
+         <Route path="admin/permissoes" element={<AdminPermissoes />} />
       </Route>
     </Routes>
   );
@@ -55,17 +66,19 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <DataProvider>
-      <AuthProvider>
-        <OfflineProvider>
-          <BrowserRouter>
-            <div className="min-h-screen text-gray-800 dark:text-gray-200">
-              <AppContent />
-            </div>
-          </BrowserRouter>
-        </OfflineProvider>
-      </AuthProvider>
-    </DataProvider>
+    <QueryClientProvider client={queryClient}>
+      <DataProvider>
+        <AuthProvider>
+          <OfflineProvider>
+            <BrowserRouter>
+              <div className="min-h-screen text-gray-800 dark:text-gray-200">
+                <AppContent />
+              </div>
+            </BrowserRouter>
+          </OfflineProvider>
+        </AuthProvider>
+      </DataProvider>
+    </QueryClientProvider>
   );
 };
 

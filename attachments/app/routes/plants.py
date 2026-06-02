@@ -99,14 +99,38 @@ def list_plants(search: Optional[str] = None, db: Session = Depends(get_db)):
         
     plants = query.all()
     
-    # Convertemos para dicionário para poder injetar os assignments calculados
+    # --- OTIMIZAÇÃO: Consulta de Usuários Única O(1) ---
+    users = db.query(models.User).all()
+    
+    # Construir mapa de assignments em memória
+    assignments_map = {
+        p.id: {
+            "coordinatorId": "",
+            "supervisorIds": [],
+            "technicianIds": [],
+            "assistantIds": []
+        } for p in plants
+    }
+    
+    for u in users:
+        user_plants = u.plantIds or []
+        role = normalize_str(u.role)
+        uid = u.id
+        for plant_id in user_plants:
+            if plant_id in assignments_map:
+                if role in ["COORDINATOR", "COORDENADOR"]:
+                    assignments_map[plant_id]["coordinatorId"] = uid
+                elif role in ["SUPERVISOR"]:
+                    assignments_map[plant_id]["supervisorIds"].append(uid)
+                elif role in ["TECHNICIAN", "TECNICO"]: 
+                    assignments_map[plant_id]["technicianIds"].append(uid)
+                elif role in ["ASSISTANT", "AUXILIAR"]:
+                    assignments_map[plant_id]["assistantIds"].append(uid)
+                    
     results = []
     for p in plants:
-        # Pydantic from_attributes converte o model SQL para dict se usarmos __dict__ ou similar,
-        # mas aqui precisamos injetar campos extras.
-        # Vamos criar um dict base e adicionar os assignments.
         p_dict = {c.name: getattr(p, c.name) for c in p.__table__.columns}
-        assigns = _get_assignments_from_users(db, p.id)
+        assigns = assignments_map[p.id]
         results.append({**p_dict, **assigns})
         
     return results

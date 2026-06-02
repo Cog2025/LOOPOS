@@ -6,14 +6,45 @@ import { format, parseISO, isAfter, startOfDay } from 'date-fns';
 import { Clock, AlertCircle, CheckCircle, PlayCircle, CalendarClock, Download, ChevronDown } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { DashboardContextType } from './Dashboard';
+import { useOSList } from './hooks/useOSList';
+import { useCan } from './hooks/useCan';
+import { Skeleton } from './ui/Skeleton';
 
 const ITEMS_PER_PAGE = 10;
 
 const Board: React.FC = () => {
   // Pega dados do Contexto
-  const { filteredOSList, openModal } = useOutletContext<DashboardContextType>();
+  const { searchTerm, openModal } = useOutletContext<DashboardContextType>();
   
   const { plants, users } = useData();
+  const { data, isLoading } = useOSList(1, 200);
+  const osList = data?.items || [];
+  const can = useCan();
+
+  const filteredOSList = React.useMemo(() => {
+    if (!searchTerm?.trim()) return osList;
+    const lowerTerm = searchTerm.toLowerCase();
+
+    return osList.filter(os => {
+        const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
+        const techName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
+        const osTitle = os.title.toLowerCase();
+        const osId = os.id.toLowerCase();
+        const osDesc = os.description?.toLowerCase() || '';
+        const assetsStr = os.assets 
+            ? os.assets.join(' ').toLowerCase() 
+            : ((os as any).assetName || '').toLowerCase();
+
+        return (
+            osTitle.includes(lowerTerm) ||
+            osId.includes(lowerTerm) ||
+            plantName.includes(lowerTerm) ||
+            techName.includes(lowerTerm) ||
+            osDesc.includes(lowerTerm) ||
+            assetsStr.includes(lowerTerm)
+        );
+    });
+  }, [osList, searchTerm, plants, users]);
   const [visibleCount, setVisibleCount] = useState<Record<string, number>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -91,6 +122,25 @@ const Board: React.FC = () => {
     }
   ];
 
+  if (isLoading) {
+    return (
+      <div className="h-full overflow-x-auto overflow-y-hidden p-6">
+        <div className="flex gap-6 h-full min-w-[1400px]">
+          {[1, 2, 3, 4, 5].map((col) => (
+            <div key={col} className="flex-1 flex flex-col bg-gray-100 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700 h-full max-w-xs">
+              <Skeleton className="h-12 w-full rounded-t-xl rounded-b-none" />
+              <div className="flex-1 p-3 space-y-3">
+                {[1, 2, 3].map((card) => (
+                  <Skeleton key={card} className="h-28 w-full rounded-lg" />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-x-auto overflow-y-hidden p-6">
       <div className="flex gap-6 h-full min-w-[1400px]">
@@ -109,7 +159,7 @@ const Board: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2">
                       <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{col.items.length}</span>
-                      {col.id !== 'future' && ( 
+                      {col.id !== 'future' && can('os.baixar') && ( 
                           <button 
                             onClick={() => openModal('DOWNLOAD_FILTER', { status: col.id })}
                             className="hover:bg-white/20 p-1 rounded transition-colors"

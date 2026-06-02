@@ -39,6 +39,10 @@ import {
 
 import { API_BASE } from '../utils/config';
 
+import { ExecutionTimer } from './execution/ExecutionTimer';
+import { SubtaskChecklist } from './execution/SubtaskChecklist';
+import { PhotoUploader } from './execution/PhotoUploader';
+
 interface Props {
   os: OS;
   onClose: () => void;
@@ -484,34 +488,12 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
     >
       <div className="flex flex-col h-[85vh]">
         {/* Header Timer */}
-        <div
-          className={`${
-            isRunning ? 'bg-gray-900 border-gray-700' : 'bg-gray-100 border-gray-300'
-          } border rounded-lg p-2 mb-2 flex justify-between items-center shadow-inner`}
-        >
-          {!isRunning ? (
-            <button
-              onClick={handleStart}
-              className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded shadow-lg flex items-center justify-center gap-2"
-            >
-              <Play size={20} />
-              INICIAR / CONTINUAR EXECUÇÃO
-            </button>
-          ) : (
-            <div className="flex justify-between w-full text-white px-2">
-              <div>
-                <div className="text-[10px] text-gray-400 uppercase">Sessão</div>
-                <div className="text-2xl font-mono font-bold">{formatTime(elapsedSession)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[10px] text-gray-400 uppercase">Total</div>
-                <div className="text-lg font-mono text-gray-300">
-                  {formatTime((liveOS.executionTimeSeconds || 0) + elapsedSession)}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        <ExecutionTimer
+          isRunning={isRunning}
+          elapsedSession={elapsedSession}
+          totalExecutionTimeSeconds={liveOS.executionTimeSeconds || 0}
+          onStart={handleStart}
+        />
 
         {/* Botão histórico */}
         <div className="flex justify-end mb-2">
@@ -583,165 +565,27 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
               className={`space-y-4 ${!isRunning ? 'opacity-50 pointer-events-none grayscale' : ''}`}
             >
               {/* Checklist */}
-              <div className="bg-white dark:bg-gray-800 p-4 rounded border border-gray-200 dark:border-gray-700 shadow-sm">
-                <h4 className="text-sm font-bold text-gray-500 uppercase mb-3 flex gap-2 items-center">
-                  <CheckSquare size={16} />
-                  Checklist
-                </h4>
-
-                {subtasks.map((item, i) => (
-                  <div
-                    key={i}
-                    className={`p-3 rounded border mb-3 transition-colors ${
-                      item.done
-                        ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                        : 'bg-gray-50 dark:bg-gray-700/40 border-gray-200 dark:border-gray-600'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex gap-2 flex-1 cursor-pointer" onClick={() => handleCheck(i)}>
-                        <div className={item.done ? 'text-green-600' : 'text-gray-400'}>
-                          {item.done ? <CheckSquare size={18} /> : <Square size={18} />}
-                        </div>
-
-                        <span
-                          className={`text-sm ${
-                            item.done
-                              ? 'line-through text-gray-500'
-                              : 'text-gray-800 dark:text-gray-100'
-                          }`}
-                        >
-                          <span className="text-blue-500 font-bold mr-2">{i + 1}</span>
-                          {item.text}
-                          {hasIT(item.text) && (
-                            <span className="ml-2 bg-blue-100 text-blue-700 text-[10px] px-1 rounded">
-                              IT
-                            </span>
-                          )}
-                        </span>
-                      </div>
-
-                      <div className="flex gap-1">
-                        {/* Galeria */}
-                        <label
-                          className={`p-1 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 ${
-                            isUploading ? 'opacity-50 pointer-events-none' : ''
-                          }`}
-                          title="Selecionar da galeria"
-                        >
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept="image/*"
-                            multiple
-                            onChange={(e) => handlePhotoUpload(e, i)}
-                            disabled={isUploading}
-                          />
-                          <UploadCloud className="text-gray-400 w-5 h-5" />
-                        </label>
-
-                        {/* Câmera */}
-                        <button
-                          type="button"
-                          onClick={() => handleTakePhoto(i)}
-                          disabled={isUploading}
-                          className="p-1 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
-                          title="Tirar foto agora"
-                        >
-                          <Camera className="text-gray-400 w-5 h-5" />
-                        </button>
-
-                      </div>
-                    </div>
-
-                    <textarea
-                      className="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm text-gray-800 dark:text-gray-200 outline-none resize-y min-h-[60px]"
-                      placeholder="Observação..."
-                      value={item.comment || ''}
-                      onChange={(e) => handleCommentChange(i, e.target.value)}
-                    />
-
-                    {/* Fotos do item */}
-                    {getImagesForItem(i).length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {getImagesForItem(i).map((img: any) => (
-                          <div key={img.id} className="relative w-16 h-16 group">
-                            <img
-                              src={resolveAssetUrl(img.url)}
-                              className="w-full h-full object-cover rounded border border-gray-300 dark:border-gray-600"
-                            />
-                            <button
-                              onClick={() => handleDeletePhoto(img.id)}
-                              className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1 shadow z-10"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <SubtaskChecklist
+                subtasks={subtasks}
+                isRunning={isRunning}
+                isUploading={isUploading}
+                onCheck={handleCheck}
+                onCommentChange={handleCommentChange}
+                onPhotoUpload={handlePhotoUpload}
+                onTakePhoto={handleTakePhoto}
+                onDeletePhoto={handleDeletePhoto}
+                getImagesForItem={getImagesForItem}
+              />
 
               {/* Fotos gerais */}
-              <div className="bg-white dark:bg-gray-800 p-4 rounded border border-gray-200 dark:border-gray-700 shadow-sm">
-                <h5 className="text-sm font-bold text-gray-500 uppercase mb-3 flex gap-2 items-center">
-                  <Camera size={16} />
-                  Fotos Gerais
-                  {!isOnline && (
-                    <span className="text-xs text-amber-600 font-medium">(Offline: sync pendente)</span>
-                  )}
-                </h5>
-
-                <div className="flex flex-wrap gap-2">
-                  {getGeneralImages().map((img: any) => (
-                    <div key={img.id} className="relative w-20 h-20 group">
-                      <img
-                        src={resolveAssetUrl(img.url)}
-                        className="w-full h-full object-cover rounded border border-gray-300 dark:border-gray-600 shadow-sm"
-                      />
-                      <button
-                        onClick={() => handleDeletePhoto(img.id)}
-                        className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1.5 shadow"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-
-                  {/* Galeria */}
-                  <label
-                    className={`w-20 h-20 flex items-center justify-center bg-gray-100 dark:bg-gray-700 border border-dashed border-gray-300 dark:border-gray-500 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 ${
-                      isUploading ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                    title="Selecionar da galeria"
-                  >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      className="hidden"
-                      accept="image/*"
-                      multiple
-                      onChange={(e) => handlePhotoUpload(e)}
-                      disabled={isUploading}
-                    />
-                    <UploadCloud className="text-gray-400 dark:text-gray-300" />
-                  </label>
-
-                  {/* Câmera */}
-                  <button
-                    type="button"
-                    onClick={() => handleTakePhoto(undefined)}
-                    disabled={isUploading}
-                    className="w-20 h-20 flex items-center justify-center bg-gray-100 dark:bg-gray-700 border border-dashed border-gray-300 dark:border-gray-500 rounded cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
-                    title="Tirar foto agora"
-                  >
-                    <Camera className="text-gray-400 dark:text-gray-300" />
-                  </button>
-                </div>
-
-              </div>
+              <PhotoUploader
+                generalImages={getGeneralImages()}
+                isOnline={isOnline}
+                isUploading={isUploading}
+                onPhotoUpload={(e) => handlePhotoUpload(e, undefined)}
+                onTakePhoto={() => handleTakePhoto(undefined)}
+                onDeletePhoto={handleDeletePhoto}
+              />
             </div>
           )}
         </div>

@@ -55,6 +55,9 @@ env/
 *.sqlite3
 *.db-journal
 *.db-wal
+attachments/data/senha banco loopos.txt
+attachments/data/Documentação de Escopo Técnico - Loop.OS.docx
+attachments/data/Documentação de Escopo Técnico - Loop.OS.pdf
 
 # --- ARQUIVOS DE AMBIENTE ---
 .env
@@ -86,3 +89,8 @@ attachments/data/*
 # --- SISTEMA OPERACIONAL ---
 Thumbs.db
 Desktop.ini
+
+# --- BACKUPS DE BANCO DE DADOS ---
+*.sql
+backup_loopos.sql
+backup_loopos_utf8.sql

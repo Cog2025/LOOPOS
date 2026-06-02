@@ -107,3 +107,10 @@ class Notification(Base):
     message = Column(String)
     read = Column(Boolean, default=False)
     timestamp = Column(String)
+
+class Permission(Base):
+    __tablename__ = "permissions"
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String, index=True)
+    slug = Column(String, index=True)
+    allowed = Column(Boolean, default=False)

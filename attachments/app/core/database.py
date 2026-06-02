@@ -23,7 +23,13 @@ if not SQLALCHEMY_DATABASE_URL:
     raise ValueError(f"❌ A variável DATABASE_URL não foi encontrada em: {env_path}")
 
 # --- CONEXÃO COM O BANCO ---
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=5,
+    max_overflow=10
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

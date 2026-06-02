@@ -5,6 +5,7 @@ import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { OS } from '../types';
 import { Plus } from 'lucide-react'; // ✅ Importar ícone Plus
+import { useCan } from './hooks/useCan';
 
 // Componentes de Layout
 import Sidebar from './Sidebar';
@@ -33,6 +34,7 @@ export interface DashboardModalConfig {
 const Dashboard: React.FC = () => {
   const { osList, plants, users } = useData();
   const { user } = useAuth();
+  const can = useCan();
   
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -100,6 +102,7 @@ const Dashboard: React.FC = () => {
             <Outlet context={contextValue} />
             
             {/* ✅ BOTÃO FLUTUANTE PARA MOBILE (FAB) */}
+            {can('os.criar') && (
             <button
               className="lg:hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg flex items-center justify-center z-50 transition-transform active:scale-95"
               onClick={() => setModalConfig({ type: 'OS_FORM' })}
@@ -107,6 +110,7 @@ const Dashboard: React.FC = () => {
             >
               <Plus size={28} />
             </button>
+            )}
         </main>
       </div>
 

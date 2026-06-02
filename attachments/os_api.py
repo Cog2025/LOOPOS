@@ -5,12 +5,14 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core import models
+from app.core.auth_middleware import get_current_user, verificar_permissao
 from datetime import datetime, timezone
 from uuid import uuid4
 import base64
 import os
 import shutil
 import re
+import logging
 from pathlib import Path
 
 # --- CONFIGURAÇÃO DE DIRETÓRIOS ---
@@ -19,7 +21,7 @@ BASE_DIR = Path(os.getcwd())
 ATTACHMENTS_DIR = BASE_DIR / "images"
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
-print(f"📸 [INIT API] Diretório base de imagens: {ATTACHMENTS_DIR}")
+logging.debug(f"📸 [INIT API] Diretório base de imagens: {ATTACHMENTS_DIR}")
 
 # --- HELPER: Limpar nome de pasta (Segurança) ---
 def sanitize_foldername(name: str) -> str:
@@ -89,7 +91,7 @@ def save_base64_image(base64_str: str, filename: str, os_id: str) -> str:
         safe_filename = f"{uuid4()}_{filename.replace(' ', '_')}"
         file_path = os_folder / safe_filename
         
-        print(f"💾 [DEBUG SAVE] Salvando em: {file_path}")
+        logging.debug(f"💾 [DEBUG SAVE] Salvando em: {file_path}")
         
         with open(file_path, "wb") as f:
             f.write(image_data)
@@ -98,7 +100,7 @@ def save_base64_image(base64_str: str, filename: str, os_id: str) -> str:
         return f"/attachments/images/{os_id}/{safe_filename}"
 
     except Exception as e:
-        print(f"❌ [ERRO] Falha ao salvar base64: {e}")
+        logging.error(f"❌ [ERRO] Falha ao salvar base64: {e}")
         return ""
 
 def process_attachments(os_id: str, attachments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -132,18 +134,18 @@ def cleanup_deleted_files(os_id: str, old_list: List[Dict], new_list: List[Dict]
             
             if file_path.exists():
                 os.remove(file_path)
-                print(f"🗑️ Arquivo deletado: {file_path}")
+                logging.info(f"🗑️ Arquivo deletado: {file_path}")
                 
                 # Opcional: Tentar remover a subpasta (Subtarefa_X) se ficar vazia
                 parent_dir = file_path.parent
                 if parent_dir != ATTACHMENTS_DIR and not any(parent_dir.iterdir()):
                     try:
                         parent_dir.rmdir()
-                        print(f"📂 Pasta vazia removida: {parent_dir}")
+                        logging.info(f"📂 Pasta vazia removida: {parent_dir}")
                     except: pass
 
         except Exception as e:
-            print(f"⚠️ Erro ao deletar arquivo {url}: {e}")
+            logging.error(f"⚠️ Erro ao deletar arquivo {url}: {e}")
 
 # --- ROTAS DA API ---
 
@@ -151,11 +153,25 @@ def cleanup_deleted_files(os_id: str, old_list: List[Dict], new_list: List[Dict]
 def list_os(
     x_user_id: Optional[str] = Header(None), 
     _ping: Optional[str] = Query(None), 
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    legacy: bool = Query(True),
     db: Session = Depends(get_db)
 ):
     if _ping: return [] 
     query = db.query(models.OS)
-    return query.all()
+    
+    if legacy:
+        return query.all()
+    
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }
 
 @router.get("/api/os/{os_id}")
 def get_os(os_id: str, db: Session = Depends(get_db)):
@@ -165,7 +181,8 @@ def get_os(os_id: str, db: Session = Depends(get_db)):
     return db_os
 
 @router.post("/api/os")
-def create_os(os_data: OSModel, db: Session = Depends(get_db)):
+def create_os(os_data: OSModel, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    verificar_permissao("os.criar", user_id, db)
     if os_data.imageAttachments:
         os_data.imageAttachments = process_attachments(os_data.id, os_data.imageAttachments)
     db_os = models.OS(**os_data.dict())
@@ -175,7 +192,8 @@ def create_os(os_data: OSModel, db: Session = Depends(get_db)):
     return db_os
 
 @router.post("/api/os/batch")
-def create_os_batch(os_list: List[OSModel], db: Session = Depends(get_db)):
+def create_os_batch(os_list: List[OSModel], db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    verificar_permissao("os.criar", user_id, db)
     created = []
     for item in os_list:
         if item.imageAttachments:
@@ -187,7 +205,8 @@ def create_os_batch(os_list: List[OSModel], db: Session = Depends(get_db)):
     return created
 
 @router.put("/api/os/{os_id}")
-def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db)):
+def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    verificar_permissao("os.editar", user_id, db)
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
     
@@ -210,7 +229,8 @@ def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db)):
     return db_os
 
 @router.delete("/api/os/batch")
-def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db)):
+def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    verificar_permissao("os.excluir", user_id, db)
     # Limpa arquivos físicos antes de deletar do banco
     oss = db.query(models.OS).filter(models.OS.id.in_(ids)).all()
     for os_obj in oss:
@@ -226,7 +246,8 @@ def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db)):
     return {"deleted_count": len(ids)}
 
 @router.delete("/api/os/{os_id}")
-def delete_os(os_id: str, db: Session = Depends(get_db)):
+def delete_os(os_id: str, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    verificar_permissao("os.excluir", user_id, db)
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: return {"ok": True}
     
@@ -249,7 +270,7 @@ def upload_attachments(
     x_user_id: str = Header(None),
     db: Session = Depends(get_db)
 ):
-    print(f"🚀 [DEBUG UPLOAD] Recebendo {len(files)} arquivos para OS: {os_id}, Legenda: {caption}")
+    logging.debug(f"🚀 [DEBUG UPLOAD] Recebendo {len(files)} arquivos para OS: {os_id}, Legenda: {caption}")
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
 
@@ -281,7 +302,7 @@ def upload_attachments(
         safe_filename = f"{uuid4()}_{file.filename.replace(' ', '_')}"
         file_path = target_folder / safe_filename
         
-        print(f"💾 [DEBUG UPLOAD] Salvando físico em: {file_path}")
+        logging.debug(f"💾 [DEBUG UPLOAD] Salvando físico em: {file_path}")
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
@@ -306,6 +327,7 @@ def upload_attachments(
 
 @router.post("/api/os/{os_id}/start")
 def start_execution(os_id: str, x_user_id: str = Header(...), db: Session = Depends(get_db)):
+    verificar_permissao("os.executar", x_user_id, db)
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
     
@@ -328,6 +350,12 @@ def pause_execution(
     x_user_id: str = Header(...), 
     db: Session = Depends(get_db)
 ):
+    # Se finished for true, é revisão. Se for false, é pausa/execução
+    if payload.get("finished"):
+        verificar_permissao("os.revisar", x_user_id, db)
+    else:
+        verificar_permissao("os.executar", x_user_id, db)
+        
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS não encontrada")
     

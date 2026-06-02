@@ -1,10 +1,20 @@
 # /attachments/app/core/security.py
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
 
 # EM PRODUÇÃO, ISSO DEVE SER UMA VARIÁVEL DE AMBIENTE SECRETA!
-SECRET_KEY = "cog@2024"
+SECRET_KEY = os.getenv("SECRET_KEY", "CHANGE_ME_IN_PRODUCTION")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 horas
 

@@ -6,7 +6,7 @@ from app.core.schemas import NotificationCreate, NotificationOut
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from app.core.security import create_access_token
+from app.core.security import create_access_token, verify_password
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -18,8 +18,9 @@ import os
 from app.routes.users import router as users_router
 from app.routes.plants import router as plants_router
 from app.routes.maintenance import router as maintenance_router
+from app.routes.permissions import router as permissions_router
 # 🔥 Import direto (o arquivo os_api.py está na raiz attachments)
-from os_api import router as os_router 
+from os_api import router as os_router
 
 print("🔄 [DEBUG] Imports concluídos. Tentando criar tabelas...")
 
@@ -49,12 +50,13 @@ app.include_router(os_router)
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(plants_router, prefix="/api/plants", tags=["plants"])
 app.include_router(maintenance_router, prefix="/api/maintenance", tags=["maintenance"])
+app.include_router(permissions_router, prefix="/api/permissions", tags=["permissions"])
 
 # --- ROTAS DE AUTENTICAÇÃO ---
 @app.post("/api/login", tags=["auth"])
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
-    if not user or user.password != form_data.password:
+    if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
     if not user.can_login:
         raise HTTPException(status_code=400, detail="Usuário inativo")

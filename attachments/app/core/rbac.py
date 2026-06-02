@@ -14,12 +14,7 @@ def can_view_user(actor: Dict, target: Dict) -> bool:
     
     ar, tr = actor["role"], target["role"]
 
-    # ✅ DEBUG AQUI:
-    if target.get("name") == "Marcelo":
-        print(f"🔍 DEBUG can_view_user:")
-        print(f"  Actor: {actor.get('name')} ({ar}) plantIds={actor.get('plantIds', [])}")
-        print(f"  Target: {target.get('name')} ({tr}) plantIds={target.get('plantIds', [])}")
-    
+
     if ar == "Admin": 
         return True
     if ar == "Operador":
@@ -36,13 +31,7 @@ def can_view_user(actor: Dict, target: Dict) -> bool:
             target_plants = target.get("plantIds",[])
             result = _overlap(actor_plants, target_plants)
             
-            # ✅ ADICIONE ISTO:
-            if target.get("name") == "Marcelo":
-                print(f"  Supervisor vendo Técnico:")
-                print(f"    actor_plants = {actor_plants}")
-                print(f"    target_plants = {target_plants}")
-                print(f"    _overlap result = {result}")
-            
+
             return result
         if tr == "Supervisor":
             return _overlap(actor.get("plantIds",[]), target.get("plantIds",[]))

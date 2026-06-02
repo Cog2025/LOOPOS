@@ -7,12 +7,15 @@ import { useAuth } from '../contexts/AuthContext';
 import Modal from './modals/Modal';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Download, FileText, Filter, ChevronDown, ChevronUp } from 'lucide-react'; // ✅ Ícones
+import { ChevronLeft, ChevronRight, Download, FileText, Filter, ChevronDown, ChevronUp, Clock } from 'lucide-react'; // ✅ Ícones
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateOSReport } from './utils/pdfGenerator';
 import { saveFile } from './utils/fileSaver';
 import { DashboardContextType } from './Dashboard'; 
+import { useOSList } from './hooks/useOSList';
+import { useCan } from './hooks/useCan';
+import { Skeleton } from './ui/Skeleton';
 
 interface DayInfo {
   date: Date;
@@ -21,12 +24,41 @@ interface DayInfo {
 }
 
 const Calendar: React.FC = () => {
-  const { filteredOSList: osList, openModal } = useOutletContext<DashboardContextType>();
+  const { searchTerm, openModal } = useOutletContext<DashboardContextType>();
+  
+  const { data, isLoading } = useOSList(1, 1000);
+  const rawOSList = data?.items || [];
+  const can = useCan();
   
   const onCardClick = (os: OS) => openModal('OS_DETAIL', { os });
 
   const { plants, users } = useData();
   const { user } = useAuth();
+
+  const osList = React.useMemo(() => {
+    if (!searchTerm?.trim()) return rawOSList;
+    const lowerTerm = searchTerm.toLowerCase();
+
+    return rawOSList.filter(os => {
+        const plantName = plants.find(p => p.id === os.plantId)?.name.toLowerCase() || '';
+        const techName = users.find(u => u.id === os.technicianId)?.name.toLowerCase() || '';
+        const osTitle = os.title.toLowerCase();
+        const osId = os.id.toLowerCase();
+        const osDesc = os.description?.toLowerCase() || '';
+        const assetsStr = os.assets 
+            ? os.assets.join(' ').toLowerCase() 
+            : ((os as any).assetName || '').toLowerCase();
+
+        return (
+            osTitle.includes(lowerTerm) ||
+            osId.includes(lowerTerm) ||
+            plantName.includes(lowerTerm) ||
+            techName.includes(lowerTerm) ||
+            osDesc.includes(lowerTerm) ||
+            assetsStr.includes(lowerTerm)
+        );
+    });
+  }, [rawOSList, searchTerm, plants, users]);
 
   const [currentDate, setCurrentDate] = useState(new Date());
   
@@ -245,6 +277,26 @@ const Calendar: React.FC = () => {
 
   const selectClass = "text-sm border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white py-1 px-2 w-full lg:w-auto";
 
+  if (isLoading) {
+    return (
+      <div className="h-full flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">
+        <div className="m-4 mb-2">
+          <Skeleton className="h-12 w-full rounded-lg" />
+        </div>
+        <div className="m-4 mt-0">
+          <Skeleton className="h-14 w-full rounded-lg" />
+        </div>
+        <div className="flex-1 p-4 pt-0">
+          <div className="grid grid-cols-7 gap-1 h-full min-h-[800px]">
+            {[...Array(35)].map((_, i) => (
+              <Skeleton key={i} className="h-24 w-full rounded" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col bg-gray-100 dark:bg-gray-900 overflow-hidden">
       
@@ -315,10 +367,13 @@ const Calendar: React.FC = () => {
              </div>
              <div className="h-8 w-px bg-gray-300 mx-2 hidden md:block"></div>
              
+             {can('os.baixar') && (
              <button onClick={() => handleDownloadReport('summary')} className="flex items-center gap-1 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs hover:bg-gray-50 transition-colors">
                 <FileText className="w-4 h-4" /> Baixar relatório resumido
              </button>
+             )}
              
+             {can('os.baixar') && (
              <button 
                 onClick={() => handleDownloadReport('complete')} 
                 disabled={isGeneratingPDF}
@@ -332,12 +387,13 @@ const Calendar: React.FC = () => {
                     </>
                 )}
              </button>
+             )}
         </div>
       </div>
 
-      {/* Grid do Calendário (Com rolagem liberada) */}
-      <div className="flex-1 p-4 pt-0 overflow-y-auto scrollbar-thin">
-        <div className="grid grid-cols-7 gap-1 h-full min-h-[800px]">
+      {/* Grid do Calendário (Com rolagem liberada e horizontal no mobile) */}
+      <div className="flex-1 p-4 pt-0 overflow-auto scrollbar-thin">
+        <div className="grid grid-cols-7 gap-1 h-full min-h-[800px] min-w-[800px] lg:min-w-full">
           {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
             <div key={d} className="text-center font-bold text-gray-500 py-2 bg-gray-200 dark:bg-gray-700 rounded-t sticky top-0 z-10 shadow-sm">{d}</div>
           ))}

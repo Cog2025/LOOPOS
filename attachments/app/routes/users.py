@@ -6,11 +6,13 @@ from uuid import uuid4
 from app.core.database import get_db
 from app.core import models
 from app.core.schemas import UserCreate, UserUpdate, UserOut
+from app.core.security import hash_password
+from app.core.auth_middleware import get_current_user
 
 router = APIRouter(tags=["users"])
 
 @router.get("", response_model=List[UserOut])
-def list_users(search: Optional[str] = None, db: Session = Depends(get_db)):
+def list_users(search: Optional[str] = None, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
     # CORREÇÃO POSTGRES: Busca Case Insensitive
     query = db.query(models.User)
     
@@ -20,16 +22,18 @@ def list_users(search: Optional[str] = None, db: Session = Depends(get_db)):
     return query.all()
     
 @router.post("", response_model=UserOut, status_code=201)
-def create_user(payload: UserCreate, db: Session = Depends(get_db)):
+def create_user(payload: UserCreate, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
     # Verifica username duplicado
     if db.query(models.User).filter(models.User.username == payload.username).first():
         raise HTTPException(status_code=409, detail="username already exists")
     
     # Cria objeto
     # O **payload.dict() converte o Pydantic para dicionário
+    user_data = payload.dict()
+    user_data["password"] = hash_password(user_data["password"])
     db_user = models.User(
         id=str(uuid4()),
-        **payload.dict()
+        **user_data
     )
     db.add(db_user)
     db.commit()
@@ -46,8 +50,11 @@ def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_db)
     update_data = payload.dict(exclude_unset=True)
     
     # Tratamento especial para senha vazia (não atualizar)
-    if "password" in update_data and not update_data["password"]:
-        del update_data["password"]
+    if "password" in update_data:
+        if not update_data["password"]:
+            del update_data["password"]
+        else:
+            update_data["password"] = hash_password(update_data["password"])
 
     for key, value in update_data.items():
         setattr(db_user, key, value)

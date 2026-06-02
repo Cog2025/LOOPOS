@@ -2,10 +2,12 @@
 // Este componente renderiza o cabeçalho superior da aplicação, visível no Dashboard.
 
 import React from 'react';
-import { Menu, Search, Plus, Bell, User } from 'lucide-react';
+import { Menu, Search, Plus, Bell, User, Moon, Sun } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 import { Role } from '../types';
+import { useCan } from './hooks/useCan';
+import { useDarkMode } from './hooks/useDarkMode';
 
 interface HeaderProps {
   searchTerm: string;
@@ -22,9 +24,11 @@ const Header: React.FC<HeaderProps> = ({
   onNewOSClick 
 }) => {
   const { user, logout } = useAuth();
+  const can = useCan();
+  const { isDarkMode, toggleDarkMode } = useDarkMode();
 
-  // ✅ Bloqueia permissão para Técnicos e Auxiliares
-  const isAllowedToCreate = user?.role !== Role.TECHNICIAN && user?.role !== Role.ASSISTANT;
+  // ✅ Bloqueia permissão para Técnicos e Auxiliares via RBAC
+  const isAllowedToCreate = can('os.criar');
 
   return (
     <header className="h-16 bg-white dark:bg-gray-800 shadow-sm flex items-center justify-between px-4 z-10 shrink-0">
@@ -59,6 +63,14 @@ const Header: React.FC<HeaderProps> = ({
 
         <NotificationBell />
         
+        <button
+          onClick={toggleDarkMode}
+          className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
+          title="Alternar Tema"
+        >
+          {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+        </button>
+
         <div className="h-8 w-px bg-gray-200 dark:bg-gray-700 mx-2" />
         
         <div className="flex items-center gap-3">
