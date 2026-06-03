@@ -34,7 +34,7 @@ jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 langdetect==1.0.9
 license-expression==30.4.4
-lingua-language-detector==2.1.1
+lingua-language-detector==2.2.0
 lxml==6.0.2
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
