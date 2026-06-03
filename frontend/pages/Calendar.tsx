@@ -4,18 +4,18 @@ import { useOutletContext } from 'react-router-dom';
 import { OS, Priority, Role } from '../types'; 
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
-import Modal from './modals/Modal';
+import Modal from '../components/modals/Modal';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, isSameDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Download, FileText, Filter, ChevronDown, ChevronUp, Clock } from 'lucide-react'; // ✅ Ícones
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { generateOSReport } from './utils/pdfGenerator';
-import { saveFile } from './utils/fileSaver';
+import { generateOSReport } from '../components/utils/pdfGenerator';
+import { saveFile } from '../components/utils/fileSaver';
 import { DashboardContextType } from './Dashboard'; 
-import { useOSList } from './hooks/useOSList';
-import { useCan } from './hooks/useCan';
-import { Skeleton } from './ui/Skeleton';
+import { useOSList } from '../components/hooks/useOSList';
+import { useCan } from '../components/hooks/useCan';
+import { Skeleton } from '../components/ui/Skeleton';
 
 interface DayInfo {
   date: Date;

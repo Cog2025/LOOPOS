@@ -1,8 +1,9 @@
 // File: components/Column.tsx
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Droppable, Draggable } from '@hello-pangea/dnd';
 import { OS, OSStatus } from '../types';
 import Card from './Card';
+import { ArrowUpDown } from 'lucide-react';
 import { STATUS_COLORS } from '../constants';
 
 interface ColumnProps {
@@ -24,11 +25,54 @@ const Column: React.FC<ColumnProps> = ({
 }) => {
     
     const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
+    const [sortBy, setSortBy] = useState('data_desc');
+    const [isSortOpen, setIsSortOpen] = useState(false);
+    const sortRef = useRef<HTMLDivElement>(null);
+    
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (sortRef.current && !sortRef.current.contains(event.target as Node)) {
+                setIsSortOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
     
     const headerColor = isFutureColumn ? 'bg-indigo-500 text-white' : (color || STATUS_COLORS[status]);
     const droppableId = isFutureColumn ? 'FUTURE' : status;
 
-    const visibleOS = items.slice(0, visibleCount);
+    const PRIORITY_WEIGHT: Record<string, number> = {
+        'Urgente': 4,
+        'Alta': 3,
+        'Média': 2,
+        'Baixa': 1
+    };
+
+    const sortedItems = useMemo(() => {
+        const list = [...items];
+        switch (sortBy) {
+            case 'data_asc':
+                list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+                break;
+            case 'data_desc':
+                list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                break;
+            case 'priority_desc':
+                list.sort((a, b) => (PRIORITY_WEIGHT[b.priority] || 0) - (PRIORITY_WEIGHT[a.priority] || 0));
+                break;
+            case 'asset_asc':
+                list.sort((a, b) => {
+                    const assetA = a.assets?.[0] || '';
+                    const assetB = b.assets?.[0] || '';
+                    return assetA.localeCompare(assetB);
+                });
+                break;
+        }
+        return list;
+    }, [items, sortBy]);
+
+    const visibleOS = sortedItems.slice(0, visibleCount);
     const hasMore = items.length > visibleCount;
 
     return (
@@ -39,6 +83,28 @@ const Column: React.FC<ColumnProps> = ({
                     {title}
                  </h4>
                  <div className="flex items-center space-x-2">
+                    {/* BOTÃO DE ORDENAÇÃO */}
+                    <div className="relative" ref={sortRef}>
+                         <button 
+                             onClick={() => setIsSortOpen(!isSortOpen)}
+                             className="text-white hover:bg-white/20 p-1 rounded transition-colors"
+                             title="Ordenar OS"
+                         >
+                             <ArrowUpDown size={18} />
+                         </button>
+                         
+                         {isSortOpen && (
+                             <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-xl border dark:border-gray-700 z-[100]">
+                                 <ul className="py-1 text-sm text-gray-700 dark:text-gray-200">
+                                     <li className={`px-4 py-2 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer ${sortBy === 'data_desc' ? 'font-bold text-blue-600' : ''}`} onClick={() => { setSortBy('data_desc'); setIsSortOpen(false); }}>Data (Mais novas)</li>
+                                     <li className={`px-4 py-2 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer ${sortBy === 'data_asc' ? 'font-bold text-blue-600' : ''}`} onClick={() => { setSortBy('data_asc'); setIsSortOpen(false); }}>Data (Mais antigas)</li>
+                                     <li className={`px-4 py-2 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer ${sortBy === 'priority_desc' ? 'font-bold text-blue-600' : ''}`} onClick={() => { setSortBy('priority_desc'); setIsSortOpen(false); }}>Prioridade (Maior)</li>
+                                     <li className={`px-4 py-2 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer ${sortBy === 'asset_asc' ? 'font-bold text-blue-600' : ''}`} onClick={() => { setSortBy('asset_asc'); setIsSortOpen(false); }}>Ativo (A-Z)</li>
+                                 </ul>
+                             </div>
+                         )}
+                    </div>
+
                     {/* ✅ BOTÃO DOWNLOAD RESTAURADO */}
                     {!isFutureColumn && onOpenDownloadFilter && (
                         <button 

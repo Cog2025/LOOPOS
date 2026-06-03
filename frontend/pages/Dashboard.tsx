@@ -5,20 +5,20 @@ import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { OS } from '../types';
 import { Plus } from 'lucide-react'; // ✅ Importar ícone Plus
-import { useCan } from './hooks/useCan';
+import { useCan } from '../components/hooks/useCan';
 
 // Componentes de Layout
-import Sidebar from './Sidebar';
-import Header from './Header';
+import Sidebar from '../components/Sidebar';
+import Header from '../components/Header';
 
 // Modais
-import OSDetailModal from './modals/OSDetailModal';
-import OSForm from './modals/OSForm';
-import UserForm from './modals/UserForm';
-import PlantForm from './modals/PlantForm';
-import DownloadModal from './modals/DownloadModal';
-import ScheduleOSModal from './modals/ScheduleOSModal';
-import ManagementModal, { ManagementModalConfig } from './modals/ManagementModal';
+import OSDetailModal from '../components/modals/OSDetailModal';
+import OSForm from '../components/modals/OSForm';
+import UserForm from '../components/modals/UserForm';
+import PlantForm from '../components/modals/PlantForm';
+import DownloadModal from '../components/modals/DownloadModal';
+import ScheduleOSModal from '../components/modals/ScheduleOSModal';
+import ManagementModal, { ManagementModalConfig } from '../components/modals/ManagementModal';
 
 export interface DashboardContextType {
   filteredOSList: OS[];

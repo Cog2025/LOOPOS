@@ -3,11 +3,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Role, PlantMaintenancePlan } from '../types';
-import Modal from './modals/Modal';
-import StandardLibraryModal from './modals/StandardLibraryModal';
-import CustomInitializationModal from './modals/CustomInitializationModal';
-import { generateFullMaintenancePDF } from './utils/pdfGenerator';
-import { saveFile } from './utils/fileSaver';
+import Modal from '../components/modals/Modal';
+import StandardLibraryModal from '../components/modals/StandardLibraryModal';
+import CustomInitializationModal from '../components/modals/CustomInitializationModal';
+import { generateFullMaintenancePDF } from '../components/utils/pdfGenerator';
+import { saveFile } from '../components/utils/fileSaver';
 import { 
     Download, ChevronDown, ChevronUp, ChevronRight, AlertCircle, BookOpen, 
     Settings, Plus, Trash2, Edit, Save, X, Filter 

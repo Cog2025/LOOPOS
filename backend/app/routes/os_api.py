@@ -156,10 +156,22 @@ def list_os(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
     legacy: bool = Query(True),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user)
 ):
     if _ping: return [] 
     query = db.query(models.OS)
+    
+    # ISOLAMENTO MULTI-TENANT (Modo Camaleão)
+    user = db.query(models.User).filter(models.User.id == current_user_id).first()
+    if user and user.role == "Cliente":
+        # Se não tiver usinas vinculadas, retorna nada
+        if not user.plantIds:
+            if legacy: return []
+            return {"items": [], "total": 0, "page": page, "page_size": page_size}
+            
+        # Filtra para trazer APENAS OSs das usinas do Cliente
+        query = query.filter(models.OS.plantId.in_(user.plantIds))
     
     if legacy:
         return query.all()

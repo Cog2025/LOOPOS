@@ -6,9 +6,9 @@ import { format, parseISO, isAfter, startOfDay } from 'date-fns';
 import { Clock, AlertCircle, CheckCircle, PlayCircle, CalendarClock, Download, ChevronDown } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { DashboardContextType } from './Dashboard';
-import { useOSList } from './hooks/useOSList';
-import { useCan } from './hooks/useCan';
-import { Skeleton } from './ui/Skeleton';
+import { useOSList } from '../components/hooks/useOSList';
+import { useCan } from '../components/hooks/useCan';
+import { Skeleton } from '../components/ui/Skeleton';
 
 const ITEMS_PER_PAGE = 10;
 

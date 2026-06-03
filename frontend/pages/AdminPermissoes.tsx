@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Role } from '../types';
 import { Shield, Save } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { API_BASE } from './utils/config';
+import { API_BASE } from '../components/utils/config';
 
 const AdminPermissoes: React.FC = () => {
     const { user } = useAuth();

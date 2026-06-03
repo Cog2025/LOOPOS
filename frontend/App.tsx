@@ -15,15 +15,15 @@ const queryClient = new QueryClient({
   },
 });
 
-import Login from './components/Login';
-import Dashboard from './components/Dashboard';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
 
 // Importando as páginas
-import Board from './components/Board';
-import Calendar from './components/Calendar';
-import Schedule52Weeks from './components/Schedule52Weeks';
-import MaintenancePlans from './components/MaintenancePlans';
-import AdminPermissoes from './components/AdminPermissoes';
+import Board from './pages/Board';
+import Calendar from './pages/Calendar';
+import Schedule52Weeks from './pages/Schedule52Weeks';
+import MaintenancePlans from './pages/MaintenancePlans';
+import AdminPermissoes from './pages/AdminPermissoes';
 
 const AppContent: React.FC = () => {
   const { user } = useAuth();

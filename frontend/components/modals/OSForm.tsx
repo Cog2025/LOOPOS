@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { OS, OSStatus, Priority, Role } from '../../types';
+import { useQueryClient } from '@tanstack/react-query';
 import Modal from './Modal';
 
 // --- SEARCHABLE SELECT ---
@@ -83,6 +84,7 @@ interface Props {
 const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
     const { addOS, updateOS, users, plants, maintenancePlans, fetchPlantPlan } = useData();
     const { user } = useAuth();
+    const queryClient = useQueryClient();
 
     const [formData, setFormData] = useState<Partial<OS>>({
         title: '', description: '', status: OSStatus.PENDING, priority: Priority.MEDIUM,
@@ -216,6 +218,10 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
         try {
             if (initialData?.id) await updateOS(formData as OS);
             else await addOS(formData as OS);
+            
+            // Invalida o cache para auto-refresh do Kanban
+            queryClient.invalidateQueries({ queryKey: ['osList'] });
+            
             onClose();
         } catch (error) { console.error(error); alert("Erro ao salvar OS"); }
     };

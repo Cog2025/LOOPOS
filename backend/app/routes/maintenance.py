@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.core.database import get_db
 from app.core import models
 from app.core.schemas import TaskTemplateCreate, TaskTemplateOut
+from app.core.auth_middleware import get_current_user
 
 router = APIRouter(tags=["maintenance"])
 
@@ -88,7 +89,14 @@ def delete_template(
 # ✅ CORREÇÃO: Mudado de "/plans" para "/plant-plans" para bater com o Frontend
 
 @router.get("/plant-plans/{plant_id}")
-def get_plant_plan(plant_id: str, db: Session = Depends(get_db)):
+def get_plant_plan(plant_id: str, db: Session = Depends(get_db), current_user_id: str = Depends(get_current_user)):
+    user = db.query(models.User).filter(models.User.id == current_user_id).first()
+    
+    # Isolamento de cliente
+    if user and user.role == "Cliente":
+        if not user.plantIds or plant_id not in user.plantIds:
+            return []
+            
     # Busca tarefas ativas
     # CORREÇÃO POSTGRES: Usar apenas .is_(True). Removemos o "OR active == 1"
     return db.query(models.PlantMaintenancePlan).filter(

@@ -4,13 +4,13 @@ import { useOutletContext } from 'react-router-dom';
 import { OS, Role, Priority } from '../types';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
-import Modal from './modals/Modal';
-import ScheduleOSModal from './modals/ScheduleOSModal'; 
+import Modal from '../components/modals/Modal';
+import ScheduleOSModal from '../components/modals/ScheduleOSModal'; 
 import { DashboardContextType } from './Dashboard';
 import { Filter, ChevronDown, ChevronUp, Clock } from 'lucide-react'; // ✅ Ícones novos
-import { useOSList } from './hooks/useOSList';
-import { useCan } from './hooks/useCan';
-import { Skeleton } from './ui/Skeleton';
+import { useOSList } from '../components/hooks/useOSList';
+import { useCan } from '../components/hooks/useCan';
+import { Skeleton } from '../components/ui/Skeleton';
 
 const Schedule52Weeks: React.FC = () => {
   const { searchTerm, openModal } = useOutletContext<DashboardContextType>();
