@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Role } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import { useCan } from './hooks/useCan';
 
 interface SidebarProps {
   isMobileOpen: boolean;
@@ -25,6 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   setModalConfig
 }) => {
   const { user, logout } = useAuth();
+  const can = useCan();
 
   const menuItems = [
     { path: '/kanban', label: 'Painel Kanban', icon: LayoutDashboard },
@@ -60,7 +62,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     setMobileOpen(false);
   };
 
-  const canViewTeam = user && user.role !== Role.CLIENT;
+  const canViewTeam = can('admin.acessar');
 
   return (
     <>
