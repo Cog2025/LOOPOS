@@ -5,6 +5,7 @@ from sqlalchemy import or_  # Adicionado para filtro de busca
 from typing import List, Optional  # Adicionado Optional
 from uuid import uuid4
 import unicodedata
+import json
 from app.core.database import get_db
 from app.core import models
 from app.core.schemas import PlantCreate, PlantUpdate, PlantOut, AssignmentsPayload
@@ -44,6 +45,38 @@ def _get_assignments_from_users(db: Session, plant_id: str) -> dict:
                 result["assistantIds"].append(uid)
     
     return result
+
+def _sync_client_plant(db: Session, plant_id: str, new_client_name: Optional[str]):
+    """Sincroniza automaticamente a posse da usina no array plantIds do usuário Cliente."""
+    clients = db.query(models.User).filter(models.User.role == "Cliente").all()
+    changed = False
+    
+    for u in clients:
+        user_plants = []
+        if u.plantIds:
+            if isinstance(u.plantIds, str):
+                try: user_plants = json.loads(u.plantIds)
+                except: user_plants = []
+            else:
+                user_plants = list(u.plantIds)
+                
+        original_plants = user_plants.copy()
+        
+        # Se for o novo dono, adiciona. Se não for, remove.
+        if new_client_name and u.name == new_client_name:
+            if plant_id not in user_plants:
+                user_plants.append(plant_id)
+        else:
+            if plant_id in user_plants:
+                user_plants.remove(plant_id)
+                
+        if user_plants != original_plants:
+            u.plantIds = user_plants
+            db.add(u)
+            changed = True
+            
+    if changed:
+        db.commit()
 
 def _update_users_from_assignments_payload(db: Session, plant_id: str, ap: AssignmentsPayload):
     users = db.query(models.User).all()
@@ -148,6 +181,9 @@ def create_plant(payload: PlantCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_plant)
     
+    # Sincroniza o dono (Cliente)
+    _sync_client_plant(db, new_plant.id, getattr(new_plant, 'client', None))
+    
     # Assignments
     ap = AssignmentsPayload(
         coordinatorId=payload.coordinatorId,
@@ -184,6 +220,9 @@ def update_plant(plant_id: str, payload: PlantUpdate, db: Session = Depends(get_
     
     db.commit()
     db.refresh(plant)
+    
+    # Sincroniza o dono (Cliente)
+    _sync_client_plant(db, plant.id, getattr(plant, 'client', None))
     
     # Atualiza usuários (Assignments)
     ap = AssignmentsPayload(
