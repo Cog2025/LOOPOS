@@ -7,8 +7,9 @@ export interface PaginatedOSResponse {
     page_size: number;
 }
 
+import { API_BASE } from '../utils/config';
+
 const fetchOSList = async (page: number, pageSize: number): Promise<PaginatedOSResponse> => {
-    const API_BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
     
     // Obtendo tokens e headers (Compatibilidade híbrida atual JWT/Legacy)
     const token = localStorage.getItem('access_token');
@@ -22,7 +23,7 @@ const fetchOSList = async (page: number, pageSize: number): Promise<PaginatedOSR
     if (token) headers['Authorization'] = `Bearer ${token}`;
     if (user && user.id) headers['X-User-Id'] = user.id;
 
-    const response = await fetch(`${API_BASE_URL}/api/os?legacy=false&page=${page}&page_size=${pageSize}`, {
+    const response = await fetch(`${API_BASE}/api/os?legacy=false&page=${page}&page_size=${pageSize}`, {
         headers
     });
     

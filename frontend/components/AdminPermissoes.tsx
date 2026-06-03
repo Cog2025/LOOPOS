@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Role } from '../types';
 import { Shield, Save } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE } from './utils/config';
 
 const AdminPermissoes: React.FC = () => {
     const { user } = useAuth();
@@ -11,7 +12,6 @@ const AdminPermissoes: React.FC = () => {
     const roles = ["Operador", "Coordenador", "Supervisor", "Técnico", "Auxiliar", "Coordinator", "Technician", "Assistant"];
     const [selectedRole, setSelectedRole] = useState(roles[0]);
 
-    const API_BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
     const token = localStorage.getItem('access_token');
     
     const headers = {
@@ -21,7 +21,7 @@ const AdminPermissoes: React.FC = () => {
     };
 
     const fetchPermissions = async () => {
-        const res = await fetch(`${API_BASE_URL}/api/permissions/${selectedRole}`, { headers });
+        const res = await fetch(`${API_BASE}/api/permissions/${selectedRole}`, { headers });
         if (!res.ok) throw new Error("Erro ao buscar permissões");
         return res.json();
     };
@@ -42,7 +42,7 @@ const AdminPermissoes: React.FC = () => {
     }, [permissions, selectedRole]);
 
     const updatePermissions = async (payload: any) => {
-        const res = await fetch(`${API_BASE_URL}/api/permissions/${selectedRole}`, {
+        const res = await fetch(`${API_BASE}/api/permissions/${selectedRole}`, {
             method: 'PUT',
             headers,
             body: JSON.stringify({ permissions: payload })
