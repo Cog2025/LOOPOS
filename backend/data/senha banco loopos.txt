@@ -1,0 +1,3 @@
+banco: loopos
+usuário: loopos
+senha: managerloop!26

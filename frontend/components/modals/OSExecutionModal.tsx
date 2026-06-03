@@ -43,6 +43,8 @@ import { ExecutionTimer } from './execution/ExecutionTimer';
 import { SubtaskChecklist } from './execution/SubtaskChecklist';
 import { PhotoUploader } from './execution/PhotoUploader';
 
+import { uploadImageToAPI } from '../../services/uploadService';
+
 interface Props {
   os: OS;
   onClose: () => void;
@@ -93,7 +95,7 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
     });
 
   const uploadFiles = async (files: File[], caption: string) => {
-    // Preview leve: blob URLs (não é base64)
+    // 1) Criar metadados iniciais
     const previews = files.map((f) => ({
       id: `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       url: URL.createObjectURL(f),
@@ -101,36 +103,58 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
       caption,
       uploadedBy: user?.name,
       uploadedAt: new Date().toISOString(),
+      _file: f // Guarda a referência original para uso imediato
     }));
 
-    // 🔥 CORREÇÃO DA DUPLICIDADE 🔥
-    // Só atualizamos o estado local com o preview se estivermos OFFLINE.
-    // Se estivermos ONLINE, esperamos o servidor devolver a lista oficial atualizada.
     if (!isOnline) {
+      // Offline: mantém a lógica de fila e base64
       patchOS(liveOS.id, {
-        imageAttachments: [...previews, ...(liveOS.imageAttachments || [])] as any,
+        imageAttachments: [...previews.map(p => { const { _file, ...rest } = p; return rest; }), ...(liveOS.imageAttachments || [])] as any,
       });
-    }
 
-    if (isOnline) {
-      // Online: Envia e deixa o reloadFromAPI atualizar a tela depois
-      await uploadOSAttachments(liveOS.id, files, caption);
+      for (const p of previews) {
+        const dataUrl = await blobToDataUrl(p._file);
+        await saveOfflineAction('UPLOAD_IMAGE', liveOS.id, {
+          attachment: {
+            id: p.id,
+            url: dataUrl,
+            fileName: p.fileName,
+            caption: p.caption,
+            uploadedBy: p.uploadedBy,
+            uploadedAt: p.uploadedAt,
+          },
+        });
+      }
       return;
     }
 
-    // Offline: mantém a lógica de fila e base64
-    for (const f of files) {
-      const dataUrl = await blobToDataUrl(f);
-      await saveOfflineAction('UPLOAD_IMAGE', liveOS.id, {
-        attachment: {
-          id: `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          url: dataUrl,
-          fileName: f.name,
-          caption,
-          uploadedBy: user?.name,
-          uploadedAt: new Date().toISOString(),
-        },
-      });
+    // Online: Envia individualmente para a API de Upload do Cloudinary
+    try {
+      const uploadedAttachments = [];
+      for (const p of previews) {
+        const secureUrl = await uploadImageToAPI(p._file);
+        
+        uploadedAttachments.push({
+           id: `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+           url: secureUrl,
+           fileName: p.fileName,
+           caption: p.caption,
+           uploadedBy: p.uploadedBy,
+           uploadedAt: p.uploadedAt
+        });
+      }
+
+      const newAttachments = [...uploadedAttachments, ...(liveOS.imageAttachments || [])];
+      
+      // Atualiza estado local imediatamente
+      patchOS(liveOS.id, { imageAttachments: newAttachments as any });
+      
+      // Atualiza backend com as URLs definitivas
+      await apiCall(`/api/os/${liveOS.id}`, 'PUT', { imageAttachments: newAttachments });
+
+    } catch (e) {
+      console.error("Falha ao subir para o Cloudinary:", e);
+      throw e;
     }
   };
 

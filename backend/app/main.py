@@ -19,10 +19,16 @@ from app.routes.users import router as users_router
 from app.routes.plants import router as plants_router
 from app.routes.maintenance import router as maintenance_router
 from app.routes.permissions import router as permissions_router
-# 🔥 Import direto (o arquivo os_api.py está na raiz attachments)
-from os_api import router as os_router
+# 🔥 Import corrigido para a nova estrutura de pastas
+from app.routes.os_api import router as os_router
+from app.routes.upload import router as upload_router
+
+from app.core.cloudinary_config import init_cloudinary
 
 print("🔄 [DEBUG] Imports concluídos. Tentando criar tabelas...")
+
+# Inicializa o Cloudinary
+init_cloudinary()
 
 try:
     models.Base.metadata.create_all(bind=engine)
@@ -46,6 +52,7 @@ app.add_middleware(
 
 # 🚨 CORREÇÃO: Sem prefixo aqui, pois já está no os_api.py (/api/os)
 app.include_router(os_router) 
+app.include_router(upload_router)
 
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(plants_router, prefix="/api/plants", tags=["plants"])
@@ -92,9 +99,9 @@ def mark_notification_read(notification_id: str, db: Session = Depends(get_db)):
 # 2. SERVIR ARQUIVOS ESTÁTICOS E FRONTEND (MANTENHA NO FINAL)
 # ==============================================================================
 
-# Caminho para attachments: Estamos em attachments/app/main.py -> subimos 2 níveis
+# Caminho para arquivos locais: Estamos em backend/app/main.py -> subimos 2 níveis
 CURRENT_DIR = Path(__file__).resolve().parent.parent 
-DIST_DIR = CURRENT_DIR.parent / "dist"
+DIST_DIR = CURRENT_DIR.parent / "frontend" / "dist"
 
 # A. Servir Imagens (Uploads)
 if CURRENT_DIR.exists():

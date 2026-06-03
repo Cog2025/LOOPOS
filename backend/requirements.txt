@@ -113,3 +113,5 @@ watchdog==6.0.0
 watchfiles==1.1.1
 websockets==15.0.1
 wrapt==1.17.3
+cloudinary
+python-multipart
