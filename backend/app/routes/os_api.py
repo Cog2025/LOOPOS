@@ -154,7 +154,7 @@ def list_os(
     x_user_id: Optional[str] = Header(None), 
     _ping: Optional[str] = Query(None), 
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=2000),
     legacy: bool = Query(True),
     db: Session = Depends(get_db)
 ):
