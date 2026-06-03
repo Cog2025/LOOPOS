@@ -12,6 +12,7 @@ import base64
 import os
 import shutil
 import re
+import json
 import logging
 from pathlib import Path
 
@@ -164,14 +165,24 @@ def list_os(
     
     # ISOLAMENTO MULTI-TENANT (Modo Camaleão)
     user = db.query(models.User).filter(models.User.id == current_user_id).first()
-    if user and user.role == "Cliente":
-        # Se não tiver usinas vinculadas, retorna nada
-        if not user.plantIds:
+    
+    plantas_permitidas = []
+    if user and user.plantIds:
+        if isinstance(user.plantIds, str):
+            try:
+                plantas_permitidas = json.loads(user.plantIds)
+            except:
+                plantas_permitidas = []
+        else:
+            plantas_permitidas = user.plantIds
+
+    # Trava ABSOLUTA de segurança
+    if user and user.role != 'Admin':
+        if not plantas_permitidas:
             if legacy: return []
-            return {"items": [], "total": 0, "page": page, "page_size": page_size}
-            
-        # Filtra para trazer APENAS OSs das usinas do Cliente
-        query = query.filter(models.OS.plantId.in_(user.plantIds))
+            return {"items": [], "total": 0, "page": page, "page_size": page_size} 
+        
+        query = query.filter(models.OS.plantId.in_(plantas_permitidas))
     
     if legacy:
         return query.all()

@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core import models
 from app.core.schemas import TaskTemplateCreate, TaskTemplateOut
 from app.core.auth_middleware import get_current_user
+import json
 
 router = APIRouter(tags=["maintenance"])
 
@@ -92,9 +93,19 @@ def delete_template(
 def get_plant_plan(plant_id: str, db: Session = Depends(get_db), current_user_id: str = Depends(get_current_user)):
     user = db.query(models.User).filter(models.User.id == current_user_id).first()
     
+    plantas_permitidas = []
+    if user and user.plantIds:
+        if isinstance(user.plantIds, str):
+            try:
+                plantas_permitidas = json.loads(user.plantIds)
+            except:
+                plantas_permitidas = []
+        else:
+            plantas_permitidas = user.plantIds
+    
     # Isolamento de cliente
     if user and user.role == "Cliente":
-        if not user.plantIds or plant_id not in user.plantIds:
+        if not plantas_permitidas or plant_id not in plantas_permitidas:
             return []
             
     # Busca tarefas ativas
