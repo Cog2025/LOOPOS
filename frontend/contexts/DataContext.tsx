@@ -276,11 +276,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const rawO = toArray(o);
       const N = toArray(n);
 
-      if (U.length) setUsers(U);
-      if (P.length) setPlants(P);
+      setUsers(U);
+      setPlants(P);
 
       setOsList((currentLocalList) => {
-        if (rawO.length === 0 && currentLocalList.length > 0) return currentLocalList;
         const currentMap = new Map(currentLocalList.map((item) => [item.id, item]));
         const merged = rawO.map((apiItem) => {
           const normalized = normalizeOS(apiItem);
@@ -475,8 +474,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!res.ok) throw new Error('Erro ao criar usuário');
       const saved = (await res.json()) as User;
       setUsers((prev) => [...prev, saved]);
+      await reloadFromAPI(); // Força atualização das usinas sincronizadas
       return saved;
-    }, [api, pingBackend, setUsers]
+    }, [api, pingBackend, setUsers, reloadFromAPI]
   );
 
   const updateUser = useCallback(async (u: User) => {
@@ -486,8 +486,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!res.ok) throw new Error('Erro ao atualizar');
       const saved = (await res.json()) as User;
       setUsers((prev) => prev.map((x) => (x.id === saved.id ? saved : x)));
+      await reloadFromAPI(); // Força atualização das usinas sincronizadas
       return saved;
-    }, [api, pingBackend, setUsers]
+    }, [api, pingBackend, setUsers, reloadFromAPI]
   );
 
   const deleteUser = useCallback(async (id: string) => {

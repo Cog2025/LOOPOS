@@ -12,7 +12,7 @@ import { API_BASE } from '../utils/config';
 const fetchOSList = async (page: number, pageSize: number): Promise<PaginatedOSResponse> => {
     
     // Obtendo tokens e headers (Compatibilidade híbrida atual JWT/Legacy)
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('token');
     const userJson = localStorage.getItem('currentUser');
     const user = userJson ? JSON.parse(userJson) : null;
 
@@ -35,8 +35,12 @@ const fetchOSList = async (page: number, pageSize: number): Promise<PaginatedOSR
 };
 
 export const useOSList = (page = 1, pageSize = 50) => {
+    const userJson = localStorage.getItem('currentUser');
+    const user = userJson ? JSON.parse(userJson) : null;
+    const companyId = user ? user.company_id : 'default';
+
     return useQuery({
-        queryKey: ['osList', page, pageSize],
+        queryKey: ['osList', companyId, page, pageSize],
         queryFn: () => fetchOSList(page, pageSize),
     });
 };

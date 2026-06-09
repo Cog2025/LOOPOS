@@ -2,7 +2,7 @@
 // Este componente renderiza um formulário modal para criar ou editar usuários.
 // ATUALIZAÇÃO: Usa diretamente o Contexto (addUser/updateUser) para salvar, eliminando erro de onSave.
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { User, Role, Plant } from '../../types';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -57,21 +57,17 @@ const UserForm: React.FC<UserFormProps> = ({
 
     // --- REGRAS DE PERMISSÃO E VISIBILIDADE ---
 
-    // 1. Verifica se é um cargo global (Admin/Operador não possuem usinas específicas vinculadas)
-    const isGlobalRole = formData.role === Role.ADMIN || formData.role === Role.OPERATOR;
-
     // 2. Verifica se o usuário atual tem permissão para editar atribuições de usina
-    // Geralmente apenas Admins e Operadores podem redistribuir pessoas entre usinas.
-    // Se um usuário comum (Técnico/Supervisor) edita a si mesmo, ele NÃO pode mudar suas usinas.
+    // Apenas Admins e Operadores podem redistribuir pessoas entre usinas.
     const canEditAssignments = useMemo(() => {
         if (!currentUser) return false;
         return currentUser.role === Role.ADMIN || currentUser.role === Role.OPERATOR;
     }, [currentUser]);
 
     // 3. Regra Final de Exibição do Campo:
-    // - Não mostramos para cargos globais (pois eles têm acesso total por padrão).
-    // - Não mostramos se o usuário logado NÃO tiver permissão de editar (solicitação do usuário).
-    const showPlantSection = !isGlobalRole && canEditAssignments;
+    // - Mostramos para todos os cargos (para que o Admin possa vincular usinas a qualquer usuário)
+    // - Mas apenas se o usuário logado tiver permissão de editar atribuições.
+    const showPlantSection = canEditAssignments;
 
     // Agrupa as usinas por Cliente para facilitar a visualização no checkbox
     const groupedPlants = useMemo(() => {
@@ -102,6 +98,12 @@ const UserForm: React.FC<UserFormProps> = ({
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (formData.username.trim().toLowerCase() === 'admin' && (!isEditing || propUser?.username.toLowerCase() !== 'admin')) {
+            alert("O nome de usuário 'admin' é reservado.");
+            return;
+        }
+
         setIsSaving(true);
         try {
             if (isEditing && propUser?.id) {
@@ -128,7 +130,7 @@ const UserForm: React.FC<UserFormProps> = ({
                 {/* Header do Modal */}
                 <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
                     <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                        {isEditing ? 'Editar Usuário' : 'Novo Usuário'}
+                        {isEditing ? `Editar ${(roleLabels[formData.role] || formData.role)}` : `Novo ${(roleLabels[formData.role] || formData.role)}`}
                     </h2>
                 </div>
 
@@ -198,7 +200,7 @@ const UserForm: React.FC<UserFormProps> = ({
                     </div>
 
                     {/* ✅ SEÇÃO DE USINAS (CONDICIONAL) */}
-                    {/* Só aparece se NÃO for cargo global E se o usuário logado tiver permissão de editar atribuições */}
+                    {/* Aparece para todos os cargos para permitir vinculação. A restrição real ocorre pelas permissões do cargo. */}
                     {showPlantSection && (
                         <div className="mt-6 border-t dark:border-gray-700 pt-4">
                             <div className="flex justify-between items-center mb-2">
@@ -263,6 +265,7 @@ const UserForm: React.FC<UserFormProps> = ({
                         </div>
                     )}
 
+                    {/* ✅ SEÇÃO DE USINAS TERMINOU AQUI */}
                     <div className="flex justify-end gap-2 pt-4">
                         <button 
                             type="button" 

@@ -35,13 +35,17 @@ const Board: React.FC = () => {
             ? os.assets.join(' ').toLowerCase() 
             : ((os as any).assetName || '').toLowerCase();
 
+        const isRejected = os.logs?.some(l => l.comment?.includes('🔴 OS REPROVADA'));
+        const rejectedStr = isRejected ? 'reprovada' : '';
+
         return (
             osTitle.includes(lowerTerm) ||
             osId.includes(lowerTerm) ||
             plantName.includes(lowerTerm) ||
             techName.includes(lowerTerm) ||
             osDesc.includes(lowerTerm) ||
-            assetsStr.includes(lowerTerm)
+            assetsStr.includes(lowerTerm) ||
+            rejectedStr.includes(lowerTerm)
         );
     });
   }, [osList, searchTerm, plants, users]);
@@ -159,7 +163,7 @@ const Board: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-2">
                       <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{col.items.length}</span>
-                      {col.id !== 'future' && can('os.baixar') && ( 
+                      {col.id !== 'future' && ( 
                           <button 
                             onClick={() => openModal('DOWNLOAD_FILTER', { status: col.id })}
                             className="hover:bg-white/20 p-1 rounded transition-colors"
@@ -181,24 +185,33 @@ const Board: React.FC = () => {
                       <div className={`absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg ${getPriorityColor(os.priority)}`} />
 
                       <div className="flex justify-between items-start mb-2 pl-2">
-                        <div className="relative">
-                            <span 
-                                className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer select-none"
-                                onClick={(e) => handleCopyId(e, os.id)}
-                                title="Clique para copiar ID"
-                            >
-                                {os.id}
-                            </span>
-                            {copiedId === os.id && (
-                                <span className="absolute left-0 -top-7 bg-gray-900 text-white text-[10px] px-2 py-1 rounded shadow-lg animate-fade-in-out whitespace-nowrap z-[9999]">
-                                    Copiado!
-                                    <span className="absolute -bottom-1 left-2 w-2 h-2 bg-gray-900 rotate-45"></span>
+                        <div className="flex flex-col gap-1">
+                            <div className="relative">
+                                <span 
+                                    className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer select-none"
+                                    onClick={(e) => handleCopyId(e, os.id)}
+                                    title="Clique para copiar ID"
+                                >
+                                    {os.id}
+                                </span>
+                                {copiedId === os.id && (
+                                    <span className="absolute left-0 -top-7 bg-gray-900 text-white text-[10px] px-2 py-1 rounded shadow-lg animate-fade-in-out whitespace-nowrap z-[9999]">
+                                        Copiado!
+                                        <span className="absolute -bottom-1 left-2 w-2 h-2 bg-gray-900 rotate-45"></span>
+                                    </span>
+                                )}
+                            </div>
+                            
+                            {/* BADGE DE REPROVADA */}
+                            {os.logs?.some(l => l.comment?.includes('🔴 OS REPROVADA')) && os.status !== OSStatus.COMPLETED && os.status !== OSStatus.IN_REVIEW && (
+                                <span className="text-[9px] font-bold bg-red-600 text-white px-1.5 py-0.5 rounded shadow-sm w-fit flex items-center gap-1 mt-1">
+                                    <AlertCircle size={10} /> REPROVADA
                                 </span>
                             )}
                         </div>
 
                         <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold
-                            ${os.priority === 'Alta' ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'}`}>
+                            ${os.priority === 'Alta' || os.priority === 'Urgente' ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'}`}>
                             {os.priority}
                         </span>
                       </div>
@@ -218,7 +231,7 @@ const Board: React.FC = () => {
                           </div>
                           <span className="flex items-center gap-1">
                               <CalendarClock size={12} />
-                              {os.startDate.split('-').reverse().join('/')}
+                              {os.startDate.split('T')[0].split('-').reverse().join('/')}
                           </span>
                       </div>
                     </div>

@@ -4,6 +4,7 @@ import { useData } from '../../contexts/DataContext';
 import { Role, OSStatus, Priority, PlantMaintenancePlan } from '../../types';
 import Modal from './Modal';
 import { addDays, isWeekend, isBefore, startOfDay } from 'date-fns';
+import { useQueryClient } from '@tanstack/react-query';
 import { 
   CheckSquare, Square, Calendar, User, AlertCircle, 
   Layers, ListFilter, ChevronDown, ChevronRight, MinusSquare
@@ -49,8 +50,12 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
 
   const [plantId, setPlantId] = useState('');
   const [technicianId, setTechnicianId] = useState('');
+  const [supervisorId, setSupervisorId] = useState('');
+  const [assistantId, setAssistantId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  
+  const queryClient = useQueryClient();
   
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -82,12 +87,29 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
 
   const availableTechnicians = useMemo(() => {
     if (!plantId) return [];
-    return users.filter(u => 
-      u.role === Role.TECHNICIAN && 
-      u.plantIds && 
-      u.plantIds.includes(plantId)
-    );
+    return users.filter(u => u.role === Role.TECHNICIAN && u.plantIds && u.plantIds.includes(plantId));
   }, [plantId, users]);
+
+  const availableSupervisors = useMemo(() => {
+    if (!plantId) return [];
+    return users.filter(u => u.role === Role.SUPERVISOR && u.plantIds && u.plantIds.includes(plantId));
+  }, [plantId, users]);
+
+  const availableAssistants = useMemo(() => {
+    if (!plantId) return [];
+    return users.filter(u => u.role === Role.ASSISTANT && u.plantIds && u.plantIds.includes(plantId));
+  }, [plantId, users]);
+
+  // Pre-seleção automática
+  useEffect(() => {
+    if (plantId) {
+      if (availableSupervisors.length === 1) setSupervisorId(availableSupervisors[0].id);
+      else setSupervisorId('');
+
+      if (availableAssistants.length === 1) setAssistantId(availableAssistants[0].id);
+      else setAssistantId('');
+    }
+  }, [plantId, availableSupervisors, availableAssistants]);
 
   // Ao carregar, seleciona tudo, mas NÃO expande nada (expandedAssets inicia vazio)
   useEffect(() => {
@@ -186,7 +208,8 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
           batchOS.push({
             plantId,
             technicianId: technicianId || undefined,
-            supervisorId: users.find(u => u.id === technicianId)?.supervisorId || undefined,
+            supervisorId: supervisorId || undefined,
+            assistantId: assistantId || undefined,
             status: OSStatus.PENDING,
             priority: correctPriority, // ✅ Agora usa a variável calculada, não 'MEDIUM' fixo
             startDate: date.toISOString(),
@@ -213,6 +236,7 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
 
     if (confirm(`Gerar ${batchOS.length} Ordens de Serviço?`)) {
       await addOSBatch(batchOS);
+      queryClient.invalidateQueries({ queryKey: ['osList'] });
       onClose();
     }
     setIsGenerating(false);
@@ -266,6 +290,36 @@ const ScheduleOSModal: React.FC<ScheduleOSModalProps> = ({ isOpen, onClose }) =>
                           availableTechnicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)
                         ) : (
                           <option value="" disabled>Nenhum técnico disponível</option>
+                        )}
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Supervisor</label>
+                <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <select value={supervisorId} onChange={e => setSupervisorId(e.target.value)} className={`${inputClasses} pl-9`}>
+                        <option value="">Sem supervisor definido</option>
+                        {availableSupervisors.length > 0 ? (
+                          availableSupervisors.map(t => <option key={t.id} value={t.id}>{t.name}</option>)
+                        ) : (
+                          <option value="" disabled>Nenhum supervisor disponível</option>
+                        )}
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Auxiliar</label>
+                <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <select value={assistantId} onChange={e => setAssistantId(e.target.value)} className={`${inputClasses} pl-9`}>
+                        <option value="">Sem auxiliar definido</option>
+                        {availableAssistants.length > 0 ? (
+                          availableAssistants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)
+                        ) : (
+                          <option value="" disabled>Nenhum auxiliar disponível</option>
                         )}
                     </select>
                 </div>

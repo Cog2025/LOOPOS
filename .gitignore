@@ -94,3 +94,16 @@ Desktop.ini
 *.sql
 backup_loopos.sql
 backup_loopos_utf8.sql
+# --- DOCKER OVERRIDE ---
+docker-compose.override.yml
+
+# Arquivos temporários e scripts de manutenção
+backend/check_db.py
+backend/check_db2.py
+backend/fix_db.py
+backend/get_user.py
+backend/list_users.py
+backend/print_test_users.py
+backend/seed_users.py
+backend/users_list.txt
+backend/payload.json

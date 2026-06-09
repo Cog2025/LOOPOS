@@ -40,6 +40,13 @@ const MaintenancePlans: React.FC = () => {
   const [isAddingAsset, setIsAddingAsset] = useState(false);
   const [newAssetName, setNewAssetName] = useState('');
 
+  // Auto-seleção de cliente para a Role Cliente
+  useEffect(() => {
+    if (user?.role === Role.CLIENT && user.name && !selectedClient) {
+      setSelectedClient(user.name);
+    }
+  }, [user, selectedClient]);
+
   // Carrega lista de clientes
   const availableClients = useMemo(() => {
       const clients = new Set<string>();
@@ -270,7 +277,7 @@ const MaintenancePlans: React.FC = () => {
             `}>
                 <div className="w-full md:w-64">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cliente</label>
-                    <div className="relative"><select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlantId(''); }} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none"><option value="">Selecione...</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
+                    <div className="relative"><select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlantId(''); }} className="w-full p-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg appearance-none" disabled={user?.role === Role.CLIENT}><option value="">Selecione...</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} /></div>
                 </div>
                 <div className="w-full md:w-64">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Usina</label>

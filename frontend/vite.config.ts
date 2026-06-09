@@ -1,4 +1,3 @@
-// File: vite.config.ts
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -14,6 +13,10 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true, 
+    // 🔥 A MÁGICA DO HOT-RELOAD NO WINDOWS/DOCKER
+    watch: {
+      usePolling: true,
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

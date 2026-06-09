@@ -13,21 +13,17 @@ import json
 router = APIRouter(tags=["maintenance"])
 
 # --- HELPER DE SEGURANÇA ---
-def verify_write_permission(user_id: str, db: Session):
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Usuário não identificado.")
-    
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
+def verify_write_permission(current_user: models.User, db: Session):
+    if not current_user:
         raise HTTPException(status_code=401, detail="Usuário não encontrado.")
     
     # 🚫 BLOQUEIO TOTAL PARA CLIENTES
-    if user.role == "Cliente":
+    if current_user.role == "Cliente":
         raise HTTPException(
             status_code=403, 
             detail="Acesso Negado: Clientes têm permissão apenas para visualização e download."
         )
-    return user
+    return current_user
 
 # --- ROTAS DA BIBLIOTECA PADRÃO (TaskTemplates) ---
 
@@ -42,10 +38,10 @@ def list_templates(asset_category: Optional[str] = None, db: Session = Depends(g
 @router.post("/templates", response_model=TaskTemplateOut)
 def create_template(
     payload: TaskTemplateCreate, 
-    x_user_id: str = Header(...), 
+    current_user: models.User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
-    verify_write_permission(x_user_id, db)
+    verify_write_permission(current_user, db)
     
     new_tmpl = models.TaskTemplate(id=str(uuid4()), **payload.dict())
     db.add(new_tmpl)
@@ -57,10 +53,10 @@ def create_template(
 def update_template(
     template_id: str, 
     payload: dict = Body(...), 
-    x_user_id: str = Header(...),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    verify_write_permission(x_user_id, db)
+    verify_write_permission(current_user, db)
 
     tmpl = db.query(models.TaskTemplate).filter(models.TaskTemplate.id == template_id).first()
     if not tmpl: raise HTTPException(404, "Template not found")
@@ -75,10 +71,10 @@ def update_template(
 @router.delete("/templates/{template_id}")
 def delete_template(
     template_id: str, 
-    x_user_id: str = Header(...),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    verify_write_permission(x_user_id, db)
+    verify_write_permission(current_user, db)
 
     tmpl = db.query(models.TaskTemplate).filter(models.TaskTemplate.id == template_id).first()
     if not tmpl: raise HTTPException(404, "Template not found")
@@ -90,8 +86,8 @@ def delete_template(
 # ✅ CORREÇÃO: Mudado de "/plans" para "/plant-plans" para bater com o Frontend
 
 @router.get("/plant-plans/{plant_id}")
-def get_plant_plan(plant_id: str, db: Session = Depends(get_db), current_user_id: str = Depends(get_current_user)):
-    user = db.query(models.User).filter(models.User.id == current_user_id).first()
+def get_plant_plan(plant_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    user = current_user
     
     plantas_permitidas = []
     if user and user.plantIds:
@@ -118,10 +114,10 @@ def get_plant_plan(plant_id: str, db: Session = Depends(get_db), current_user_id
 @router.post("/plant-plans/{plant_id}/init")
 def initialize_plan_from_library(
     plant_id: str, 
-    x_user_id: str = Header(...),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    verify_write_permission(x_user_id, db)
+    verify_write_permission(current_user, db)
 
     # Limpa anterior
     db.query(models.PlantMaintenancePlan).filter(models.PlantMaintenancePlan.plantId == plant_id).delete()

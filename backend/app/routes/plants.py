@@ -9,6 +9,7 @@ import json
 from app.core.database import get_db
 from app.core import models
 from app.core.schemas import PlantCreate, PlantUpdate, PlantOut, AssignmentsPayload
+from app.core.auth_middleware import get_current_user
 
 router = APIRouter(tags=["plants"])
 
@@ -117,9 +118,34 @@ def _update_users_from_assignments_payload(db: Session, plant_id: str, ap: Assig
 # --- ROTAS ---
 
 @router.get("", response_model=List[PlantOut])
-def list_plants(search: Optional[str] = None, db: Session = Depends(get_db)):
+def list_plants(search: Optional[str] = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # CORREÇÃO POSTGRES: Adicionada lógica de busca Case Insensitive com .ilike
-    query = db.query(models.Plant)
+    empresa_id = getattr(current_user, 'empresa_atual_id', current_user.company_id)
+    if not empresa_id:
+        if getattr(current_user, 'is_superadmin', False):
+            # Visão Global para SuperAdmin
+            query = db.query(models.Plant)
+        else:
+            return []
+    else:    
+        # ISOLAMENTO MULTI-TENANT
+        query = db.query(models.Plant).filter(models.Plant.company_id == empresa_id)
+    
+    # ISOLAMENTO: Modo Camaleão (Cliente enxerga apenas o que lhe pertence)
+    user = current_user
+    if user and user.role not in ['Admin', 'Operador']:
+        plantas_permitidas = []
+        if user.plantIds:
+            if isinstance(user.plantIds, str):
+                try: plantas_permitidas = json.loads(user.plantIds)
+                except: plantas_permitidas = []
+            else:
+                plantas_permitidas = user.plantIds
+        
+        if not plantas_permitidas:
+            return []
+            
+        query = query.filter(models.Plant.id.in_(plantas_permitidas))
     
     if search:
         search_term = f"%{search}%"
@@ -169,12 +195,17 @@ def list_plants(search: Optional[str] = None, db: Session = Depends(get_db)):
     return results
 
 @router.post("", response_model=PlantOut, status_code=201)
-def create_plant(payload: PlantCreate, db: Session = Depends(get_db)):
+def create_plant(payload: PlantCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    empresa_id = getattr(current_user, 'empresa_atual_id', current_user.company_id)
+    if not empresa_id:
+        raise HTTPException(status_code=400, detail="É necessário selecionar uma empresa para criar usinas.")
+
     # Separa dados da planta dos assignments
     plant_data = payload.dict(exclude={'coordinatorId', 'supervisorIds', 'technicianIds', 'assistantIds'})
     
     new_plant = models.Plant(
         id=str(uuid4()),
+        company_id=empresa_id,
         **plant_data
     )
     db.add(new_plant)

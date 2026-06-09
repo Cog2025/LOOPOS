@@ -1,6 +1,7 @@
 // File: components/modals/OSDetailModal.tsx
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Modal from './Modal';
 
 import { OS, Role, Priority, OSStatus } from '../../types';
@@ -26,6 +27,7 @@ import {
   User,
   MessageSquare,
   CheckCircle,
+  XCircle,
   Wifi,
   WifiOff,
   History,
@@ -42,14 +44,16 @@ interface Props {
 
 const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   const { user } = useAuth();
-  const { deleteOSBatch, addOSLog, users, plants, osList, reloadFromAPI } = useData();
+  const { deleteOSBatch, addOSLog, users, plants, osList, reloadFromAPI, patchOS } = useData();
   const { isOnline, saveOfflineAction } = useOffline();
   const can = useCan();
+  const queryClient = useQueryClient();
 
   const [newLog, setNewLog] = useState('');
   const [showExecutionModal, setShowExecutionModal] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [reviewSubtasks, setReviewSubtasks] = useState<any[]>([]);
 
   const liveOS: OS = useMemo(() => {
     return (osList.find((item) => item.id === os.id) || os) as OS;
@@ -60,6 +64,14 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
 
   const currentPlant = plants.find((p) => p.id === liveOS.plantId);
   const coordinatorName = getUserName(currentPlant?.coordinatorId || '');
+
+  useEffect(() => {
+    if (liveOS.subtasksStatus) {
+      setReviewSubtasks(liveOS.subtasksStatus);
+    } else {
+      setReviewSubtasks([]);
+    }
+  }, [liveOS.subtasksStatus]);
 
   const formatDate = (dateStr: string) => {
     const s = (dateStr || '').trim();
@@ -123,10 +135,18 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   };
 
   const executionPermission = useMemo(() => {
-    if (!user) return { allowed: false, reason: 'Usuário não logado' };
-    if (!can('os.executar')) return { allowed: false, reason: 'Acesso negado (RBAC)' };
+    if (!user) return { allowed: false, reason: 'Sem usuário logado' };
+
     if (liveOS.status === OSStatus.COMPLETED) return { allowed: false, reason: 'OS Finalizada' };
+    if (liveOS.status === OSStatus.IN_REVIEW) return { allowed: false, reason: 'Em Revisão (Aguardando Aprovação)' };
     if (user.role === Role.ADMIN || user.role === Role.OPERATOR) return { allowed: true, reason: '' };
+
+    // Coordenador e Supervisor da usina podem executar
+    if (user.role === Role.COORDINATOR || user.role === Role.SUPERVISOR) {
+      if (user.plantIds && user.plantIds.includes(liveOS.plantId)) {
+        return { allowed: true, reason: '' };
+      }
+    }
 
     if (user.role === Role.ASSISTANT) {
       if (liveOS.priority === Priority.HIGH || liveOS.priority === Priority.URGENT) {
@@ -170,6 +190,73 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
   const handleExecutionClick = () => {
     if (executionPermission.allowed) setShowExecutionModal(true);
     else alert(`Execução bloqueada: ${executionPermission.reason}`);
+  };
+
+  const handleReviewItem = (idx: number, action: 'APPROVE' | 'REJECT') => {
+    const newSubtasks = [...reviewSubtasks];
+    if (action === 'APPROVE') {
+      newSubtasks[idx] = { ...newSubtasks[idx], isApproved: true, isRejected: false, rejectionReason: '' };
+    } else {
+      newSubtasks[idx] = { ...newSubtasks[idx], isApproved: false, isRejected: true };
+    }
+    setReviewSubtasks(newSubtasks);
+  };
+
+  const handleRejectionReasonChange = (idx: number, text: string) => {
+    const newSubtasks = [...reviewSubtasks];
+    newSubtasks[idx] = { ...newSubtasks[idx], rejectionReason: text };
+    setReviewSubtasks(newSubtasks);
+  };
+
+  const handleApproveOS = async () => {
+    // Validar se tem item rejeitado quando tenta aprovar
+    if (reviewSubtasks.some(st => st.isRejected)) {
+      if (!confirm('Você tem itens marcados como REPROVADOS. Tem certeza que deseja APROVAR a OS inteira mesmo assim?')) return;
+    }
+    
+    if (confirm('Aprovar e Finalizar esta OS definitivamente?')) {
+      try {
+        if (isOnline) {
+          await patchOS(liveOS.id, { status: OSStatus.COMPLETED, endDate: new Date().toISOString(), subtasksStatus: reviewSubtasks });
+          await reloadFromAPI();
+          queryClient.invalidateQueries({ queryKey: ['osList'] });
+          alert('✅ OS Aprovada com sucesso!');
+          onClose();
+        } else {
+          alert('Você precisa estar online para aprovar a OS.');
+        }
+      } catch (e) {
+        alert('Erro ao aprovar OS.');
+      }
+    }
+  };
+
+  const handleRejectOS = async () => {
+    const motivo = prompt('Motivo da reprovação:');
+    if (motivo === null) return;
+    if (confirm('Tem certeza que deseja REPROVAR esta OS e devolvê-la para a fila de Execução?')) {
+      try {
+        if (isOnline) {
+          const rejectLog = {
+            id: Date.now().toString(),
+            timestamp: new Date().toISOString(),
+            authorId: user?.id || 'Sistema',
+            comment: `🔴 OS REPROVADA: ${motivo || 'Sem motivo detalhado.'}`,
+          };
+          const updatedLogs = [...(liveOS.logs || []), rejectLog];
+          // Enviando a OS de volta para "Pendente" conforme solicitado e salvando o checklist revisado
+          await patchOS(liveOS.id, { status: OSStatus.PENDING, logs: updatedLogs, subtasksStatus: reviewSubtasks });
+          await reloadFromAPI();
+          queryClient.invalidateQueries({ queryKey: ['osList'] });
+          alert('⚠️ OS Reprovada e devolvida para Pendente com sucesso!');
+          onClose();
+        } else {
+          alert('Você precisa estar online para reprovar a OS.');
+        }
+      } catch (e) {
+        alert('Erro ao reprovar OS.');
+      }
+    }
   };
 
   const handleDelete = () => {
@@ -252,7 +339,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
 
                 <div className="flex gap-1">
                   {/* ✅ BOTÃO DOWNLOAD MODIFICADO (ZIP) */}
-                  {can('os.baixar') && (
                   <button
                     onClick={handleDownloadPackage}
                     disabled={isDownloading}
@@ -268,7 +354,6 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                         </div>
                     )}
                   </button>
-                  )}
 
                   {canEdit && (
                     <button
@@ -367,6 +452,23 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
                 <div className="w-full py-3 bg-green-100 text-green-800 rounded-lg text-center font-bold flex items-center justify-center gap-2">
                   <CheckCircle size={20} /> OS FINALIZADA
                 </div>
+              ) : liveOS.status === OSStatus.IN_REVIEW && can('os.revisar') ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleRejectOS}
+                    className="flex-1 py-3 rounded-lg font-bold text-white shadow-md flex items-center justify-center gap-2 transition-all transform active:scale-95 bg-red-600 hover:bg-red-700"
+                    title="Reprovar OS e devolver para Execução"
+                  >
+                    <XCircle size={20} /> REPROVAR OS
+                  </button>
+                  <button
+                    onClick={handleApproveOS}
+                    className="flex-1 py-3 rounded-lg font-bold text-white shadow-md flex items-center justify-center gap-2 transition-all transform active:scale-95 bg-green-600 hover:bg-green-700"
+                    title="Aprovar e finalizar OS definitivamente"
+                  >
+                    <CheckCircle size={20} /> APROVAR OS
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={handleExecutionClick}
@@ -463,6 +565,101 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
               </div>
             )}
 
+            {/* Checklist e Evidências */}
+            {(liveOS.status === OSStatus.COMPLETED || liveOS.status === OSStatus.IN_REVIEW) && (
+              <div className="border-t dark:border-gray-700 pt-4">
+                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                  <CheckCircle size={16} /> Checklist & Evidências
+                </h4>
+                
+                {reviewSubtasks && reviewSubtasks.length > 0 && (
+                  <div className="mb-4 bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700">
+                    <ul className="space-y-3 text-sm">
+                      {reviewSubtasks.map((st: any, idx: number) => (
+                        <li key={idx} className={`p-3 rounded border transition-colors ${st.isRejected ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800' : st.isApproved ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600'}`}>
+                          <div className="flex justify-between items-start gap-4">
+                            <div className="flex items-start gap-2 flex-1">
+                              {st.done ? (
+                                <CheckCircle size={18} className="text-green-500 mt-0.5 flex-shrink-0" />
+                              ) : (
+                                <div className="w-4 h-4 rounded-full border-2 border-gray-300 dark:border-gray-600 mt-0.5 flex-shrink-0" />
+                              )}
+                              <div>
+                                <span className={st.done ? 'line-through opacity-70 text-gray-700 dark:text-gray-300' : 'text-gray-800 dark:text-gray-100'}>{st.text}</span>
+                                {st.comment && <p className="text-xs text-gray-500 dark:text-gray-400 italic mt-1">Obs: {st.comment}</p>}
+                              </div>
+                            </div>
+                            
+                            {/* Ações de Revisão */}
+                            {liveOS.status === OSStatus.IN_REVIEW && can('os.revisar') && (
+                              <div className="flex gap-2 flex-shrink-0">
+                                <button
+                                  onClick={() => handleReviewItem(idx, 'APPROVE')}
+                                  className={`p-1.5 rounded transition-colors ${st.isApproved ? 'bg-green-500 text-white' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 hover:bg-green-100 hover:text-green-700'}`}
+                                  title="Aprovar Item"
+                                >
+                                  <CheckCircle size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleReviewItem(idx, 'REJECT')}
+                                  className={`p-1.5 rounded transition-colors ${st.isRejected ? 'bg-red-500 text-white' : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 hover:bg-red-100 hover:text-red-700'}`}
+                                  title="Reprovar Item"
+                                >
+                                  <XCircle size={16} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Campo de Justificativa se Reprovado */}
+                          {st.isRejected && liveOS.status === OSStatus.IN_REVIEW && can('os.revisar') && (
+                            <div className="mt-3 ml-6">
+                              <textarea
+                                className="w-full bg-white dark:bg-gray-800 border border-red-300 dark:border-red-800 rounded p-2 text-xs text-gray-800 dark:text-gray-200 focus:ring-red-500 focus:border-red-500 outline-none resize-y"
+                                placeholder="Descreva o que precisa ser arrumado..."
+                                value={st.rejectionReason || ''}
+                                onChange={(e) => handleRejectionReasonChange(idx, e.target.value)}
+                              />
+                            </div>
+                          )}
+                          
+                          {/* Exibir Justificativa fixa */}
+                          {st.isRejected && (liveOS.status !== OSStatus.IN_REVIEW || !can('os.revisar')) && (
+                            <div className="mt-3 ml-6 bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 text-xs p-2 rounded border border-red-200 dark:border-red-800">
+                              <strong>Motivo da reprovação:</strong> {st.rejectionReason}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {liveOS.imageAttachments && liveOS.imageAttachments.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {liveOS.imageAttachments.map((img: any, idx: number) => (
+                      <div key={idx} className="relative group rounded overflow-hidden border dark:border-gray-700 bg-black aspect-square">
+                        <img 
+                          src={img.url} 
+                          alt={img.caption || `Imagem ${idx + 1}`} 
+                          className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" 
+                          onClick={() => window.open(img.url, '_blank')}
+                          title="Clique para expandir"
+                        />
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] p-1 truncate">
+                          {img.caption || 'Sem Legenda'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {(!liveOS.subtasksStatus?.length && !liveOS.imageAttachments?.length) && (
+                  <p className="text-xs text-gray-400 italic">Nenhum checklist ou imagem registrados.</p>
+                )}
+              </div>
+            )}
+
             {/* Logs e Comentários */}
             <div className="border-t dark:border-gray-700 pt-4">
               <div className="flex justify-between items-center mb-2">
@@ -517,7 +714,10 @@ const OSDetailModal: React.FC<Props> = ({ isOpen, onClose, os, onEdit }) => {
         </div>
       </Modal>
 
-      {showExecutionModal && <OSExecutionModal os={liveOS} onClose={() => setShowExecutionModal(false)} />}
+      {showExecutionModal && <OSExecutionModal os={liveOS} onClose={(finished) => {
+          setShowExecutionModal(false);
+          if (finished) onClose();
+      }} />}
     </>
   );
 };

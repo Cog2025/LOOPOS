@@ -38,6 +38,9 @@ export interface User {
     supervisorId?: string;
     password?: string;
     plantIds?: string[];
+    company_id?: string;
+    is_superadmin?: boolean;
+    permissions?: string[];
 }
 
 export interface SubPlant {
@@ -84,6 +87,9 @@ export interface SubtaskItem {
     text: string;
     done: boolean;
     comment?: string;
+    isApproved?: boolean;
+    isRejected?: boolean;
+    rejectionReason?: string;
 }
 
 export interface ExecutionSession {

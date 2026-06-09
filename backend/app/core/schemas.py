@@ -20,7 +20,7 @@ class AssignmentsPayload(BaseModel):
 # --- Plantas ---
 class PlantBase(BaseModel):
     name: str
-    client: str
+    client: Optional[str] = None
     stringCount: int = 0
     trackerCount: int = 0
     assets: List[str] = []
@@ -34,6 +34,7 @@ class PlantUpdate(PlantBase, AssignmentsPayload):
 
 class PlantOut(PlantBase, AssignmentsPayload):
     id: str
+    company_id: Optional[Any] = None
     class Config:
         from_attributes = True
 
@@ -47,6 +48,9 @@ class UserBase(BaseModel):
     supervisorId: Optional[str] = None
     can_login: bool = True
     plantIds: List[str] = []
+    company_id: Optional[Any] = None
+    is_superadmin: bool = False
+    permissions: List[str] = []
 
 class UserCreate(UserBase):
     password: str

@@ -15,6 +15,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { useQueryClient } from '@tanstack/react-query';
 
 
 import Modal from './Modal';
@@ -47,7 +48,7 @@ import { uploadImageToAPI } from '../../services/uploadService';
 
 interface Props {
   os: OS;
-  onClose: () => void;
+  onClose: (finished?: boolean) => void;
 }
 
 const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
@@ -56,6 +57,7 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
 
   // ✅ isOnline = online REAL (device + ping backend OK), não apenas "tem internet"
   const { isOnline, saveOfflineAction } = useOffline();
+  const queryClient = useQueryClient();
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -146,11 +148,8 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
 
       const newAttachments = [...uploadedAttachments, ...(liveOS.imageAttachments || [])];
       
-      // Atualiza estado local imediatamente
+      // Atualiza estado local e backend com o objeto completo
       patchOS(liveOS.id, { imageAttachments: newAttachments as any });
-      
-      // Atualiza backend com as URLs definitivas
-      await apiCall(`/api/os/${liveOS.id}`, 'PUT', { imageAttachments: newAttachments });
 
     } catch (e) {
       console.error("Falha ao subir para o Cloudinary:", e);
@@ -269,6 +268,7 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
       await apiCall(`/api/os/${liveOS.id}/start`, 'POST');
       setIsRunning(true);
       await reloadFromAPI();
+      queryClient.invalidateQueries({ queryKey: ['osList'] });
     } catch (e: any) {
       alert(e?.message || 'Erro ao iniciar.');
       if ((e?.message || '').includes('Bloqueado')) onClose();
@@ -300,7 +300,9 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
         setIsRunning(false);
         setElapsedSession(0);
         await reloadFromAPI();
-        onClose();
+        queryClient.invalidateQueries({ queryKey: ['osList'] });
+        if (finished) alert('✅ OS finalizada e enviada para Revisão com sucesso!');
+        onClose(finished);
         return;
       } catch (e) {
         console.log('Falha no pause online, salvando offline...', e);
@@ -324,8 +326,8 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
       await saveOfflineAction('UPDATE_STATUS', liveOS.id, payload);
       setIsRunning(false);
       setElapsedSession(0);
-      alert(`Sem conexão com o servidor. Tempo de ${formatTime(currentSessionSeconds)} salvo no DISPOSITIVO.`);
-      onClose();
+      alert(`Sem conexão com o servidor. Tempo de ${formatTime(currentSessionSeconds)} salvo no DISPOSITIVO.${finished ? ' OS marcada para finalizar.' : ''}`);
+      onClose(finished);
     } catch {
       alert('Erro crítico ao salvar offline.');
     }
@@ -335,14 +337,15 @@ const OSExecutionModal: React.FC<Props> = ({ os, onClose }) => {
   const handleCheck = (i: number) => {
     if (!isRunning) return alert('Inicie a execução.');
     const n = [...subtasks];
-    n[i] = { ...n[i], done: !n[i]?.done };
+    // Limpa os status de revisão ao interagir
+    n[i] = { ...n[i], done: !n[i]?.done, isRejected: false, isApproved: false, rejectionReason: '' };
     setSubtasks(n);
   };
 
   const handleCommentChange = (i: number, t: string) => {
     if (!isRunning) return;
     const n = [...subtasks];
-    n[i] = { ...n[i], comment: t };
+    n[i] = { ...n[i], comment: t, isRejected: false, isApproved: false, rejectionReason: '' };
     setSubtasks(n);
   };
 

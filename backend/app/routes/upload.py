@@ -1,12 +1,13 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from app.core.auth_middleware import get_current_user
+from app.core import models
 import cloudinary.uploader
 import logging
 
 router = APIRouter()
 
 @router.post("/api/upload", tags=["upload"])
-def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_current_user)):
+def upload_image(file: UploadFile = File(...), current_user: models.User = Depends(get_current_user)):
     try:
         file_content = file.file.read()
         

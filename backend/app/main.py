@@ -1,11 +1,13 @@
 # Arquivo: attachments/app/main.py
 print("🔄 [DEBUG] Iniciando imports do main.py...")
-from app.core.database import engine, get_db
+from app.core.database import engine, get_db, SessionLocal
 from app.core import models
+import app.core.listeners  # 🚀 Ativa a Auditoria Universal
 from app.core.schemas import NotificationCreate, NotificationOut
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from sqlalchemy import text, or_
 from app.core.security import create_access_token, verify_password
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +24,8 @@ from app.routes.permissions import router as permissions_router
 # 🔥 Import corrigido para a nova estrutura de pastas
 from app.routes.os_api import router as os_router
 from app.routes.upload import router as upload_router
+from app.routes.empresas import router as empresas_router
+from app.routes.auditoria import router as auditoria_router
 
 from app.core.cloudinary_config import init_cloudinary
 
@@ -33,6 +37,36 @@ init_cloudinary()
 try:
     models.Base.metadata.create_all(bind=engine)
     print("✅ [DEBUG] Tabelas criadas/verificadas com sucesso!")
+    
+    # AUTO-MIGRATION LEVE E BOOTSTRAP DE SUPERADMIN
+    with Session(engine) as session:
+        session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id UUID;"))
+        session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_superadmin BOOLEAN DEFAULT FALSE;"))
+        session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSON DEFAULT '[]'::json;"))
+        session.execute(text("ALTER TABLE plants ADD COLUMN IF NOT EXISTS company_id UUID;"))
+        session.execute(text("ALTER TABLE os ADD COLUMN IF NOT EXISTS company_id UUID;"))
+        session.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS cnpj VARCHAR;"))
+        session.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'Ativo';"))
+        session.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS modulos_ativos JSON DEFAULT '[]'::json;"))
+        session.execute(text("ALTER TABLE role_permissions ADD COLUMN IF NOT EXISTS company_id UUID;"))
+        session.execute(text("ALTER TABLE role_permissions DROP CONSTRAINT IF EXISTS role_permissions_role_name_key;"))
+        
+        # SEEDING DE CARGOS FOI REMOVIDO DAQUI
+        # (agora é feito por empresa no momento de sua criação)
+        
+        # Corrigindo o is_superadmin para qualquer admin
+        from sqlalchemy import or_
+        admins = session.query(models.User).filter(
+            or_(
+                models.User.role.ilike('admin'),
+                models.User.username.ilike('admin')
+            )
+        ).all()
+        for admin in admins:
+            if not admin.is_superadmin:
+                admin.is_superadmin = True
+                session.add(admin)
+        session.commit()
 except Exception as e:
     print(f"❌ [DEBUG] Erro fatal ao criar tabelas: {e}")
 
@@ -54,10 +88,12 @@ app.add_middleware(
 app.include_router(os_router) 
 app.include_router(upload_router)
 
+app.include_router(empresas_router, prefix="/api/empresas", tags=["empresas"])
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(plants_router, prefix="/api/plants", tags=["plants"])
 app.include_router(maintenance_router, prefix="/api/maintenance", tags=["maintenance"])
-app.include_router(permissions_router, prefix="/api/permissions", tags=["permissions"])
+app.include_router(permissions_router, prefix="/api/permissoes", tags=["permissions"])
+app.include_router(auditoria_router, prefix="/api/auditoria", tags=["auditoria"])
 
 # --- ROTAS DE AUTENTICAÇÃO ---
 @app.post("/api/login", tags=["auth"])
@@ -67,7 +103,21 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
     if not user.can_login:
         raise HTTPException(status_code=400, detail="Usuário inativo")
-    return {"access_token": create_access_token({"sub": user.id, "role": user.role}), "token_type": "bearer", "user": user}
+        
+    role_perm = db.query(models.RolePermission).filter(
+        models.RolePermission.role_name == user.role,
+        or_(
+            models.RolePermission.company_id == user.company_id,
+            models.RolePermission.company_id.is_(None)
+        )
+    ).order_by(models.RolePermission.company_id.desc()).first()
+    role_permissions = role_perm.permissions if role_perm else []
+    
+    user_out = user.__dict__.copy()
+    user_out.pop('_sa_instance_state', None)
+    user_out['permissions'] = role_permissions
+    
+    return {"access_token": create_access_token({"sub": user.id, "role": user.role}), "token_type": "bearer", "user": user_out}
 
 # --- ROTAS DE NOTIFICAÇÕES ---
 @app.get("/api/notifications", response_model=List[NotificationOut], tags=["notifications"])

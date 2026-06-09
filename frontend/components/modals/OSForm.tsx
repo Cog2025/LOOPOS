@@ -248,7 +248,7 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
                         </div>
                         <div>
                             <label className={labelClass}>Data Prevista</label>
-                            <input type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} className={inputClass} />
+                            <input type="date" value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})} className={inputClass} />
                         </div>
                     </div>
 
@@ -351,7 +351,7 @@ const OSForm: React.FC<Props> = ({ isOpen, onClose, initialData }) => {
                         </div>
                     </div>
 
-                    <div><label className={labelClass}>Descrição Adicional</label><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className={`${inputClass} h-24 resize-none`} /></div>
+                    <div><label className={labelClass}>Descrição Adicional</label><textarea value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} className={`${inputClass} h-24 resize-none`} /></div>
                 </div>
 
                 <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-2 shrink-0">

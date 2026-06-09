@@ -5,7 +5,8 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core import models
-from app.core.auth_middleware import get_current_user, verificar_permissao
+from app.core.auth_middleware import get_current_user
+from app.core.permissions import verificar_permissao
 from datetime import datetime, timezone
 from uuid import uuid4
 import base64
@@ -158,13 +159,22 @@ def list_os(
     page_size: int = Query(50, ge=1, le=2000),
     legacy: bool = Query(True),
     db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user)
 ):
     if _ping: return [] 
-    query = db.query(models.OS)
+    
+    empresa_id = getattr(current_user, 'empresa_atual_id', current_user.company_id)
+    if not empresa_id:
+        if getattr(current_user, 'is_superadmin', False):
+            query = db.query(models.OS)
+        else:
+            if legacy: return []
+            return {"items": [], "total": 0, "page": page, "page_size": page_size}
+    else:    
+        query = db.query(models.OS).filter(models.OS.company_id == empresa_id)
     
     # ISOLAMENTO MULTI-TENANT (Modo Camaleão)
-    user = db.query(models.User).filter(models.User.id == current_user_id).first()
+    user = current_user
     
     plantas_permitidas = []
     if user and user.plantIds:
@@ -177,7 +187,7 @@ def list_os(
             plantas_permitidas = user.plantIds
 
     # Trava ABSOLUTA de segurança
-    if user and user.role != 'Admin':
+    if user and user.role not in ['Admin', 'Operador']:
         if not plantas_permitidas:
             if legacy: return []
             return {"items": [], "total": 0, "page": page, "page_size": page_size} 
@@ -204,34 +214,51 @@ def get_os(os_id: str, db: Session = Depends(get_db)):
     return db_os
 
 @router.post("/api/os")
-def create_os(os_data: OSModel, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
-    verificar_permissao("os.criar", user_id, db)
+def create_os(os_data: OSModel, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    verificar_permissao("os.criar", current_user, db)
+    empresa_id = getattr(current_user, 'empresa_atual_id', current_user.company_id)
+    if not empresa_id:
+        raise HTTPException(status_code=400, detail="É necessário selecionar uma empresa para criar OS.")
+        
     if os_data.imageAttachments:
         os_data.imageAttachments = process_attachments(os_data.id, os_data.imageAttachments)
-    db_os = models.OS(**os_data.dict())
+    
+    os_dict = os_data.dict()
+    db_os = models.OS(**os_dict, company_id=empresa_id)
     db.add(db_os)
     db.commit()
     db.refresh(db_os)
     return db_os
 
 @router.post("/api/os/batch")
-def create_os_batch(os_list: List[OSModel], db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
-    verificar_permissao("os.criar", user_id, db)
+def create_os_batch(os_list: List[OSModel], db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    verificar_permissao("os.criar", current_user, db)
+    empresa_id = getattr(current_user, 'empresa_atual_id', current_user.company_id)
+    if not empresa_id:
+        raise HTTPException(status_code=400, detail="É necessário selecionar uma empresa para criar OS.")
+        
     created = []
     for item in os_list:
         if item.imageAttachments:
             item.imageAttachments = process_attachments(item.id, item.imageAttachments)
-        db_os = models.OS(**item.dict())
+        
+        item_dict = item.dict()
+        db_os = models.OS(**item_dict, company_id=empresa_id)
         db.add(db_os)
         created.append(db_os)
     db.commit()
     return created
 
 @router.put("/api/os/{os_id}")
-def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
-    verificar_permissao("os.editar", user_id, db)
+def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
+    
+    try:
+        verificar_permissao("os.editar", current_user, db)
+    except HTTPException:
+        if current_user.id not in [db_os.technicianId, db_os.assistantId, db_os.currentExecutorId]:
+            raise HTTPException(403, "Sem permissão para editar esta OS")
     
     if payload.imageAttachments is not None:
         old_attachments = db_os.imageAttachments or []
@@ -252,8 +279,8 @@ def update_os(os_id: str, payload: OSModel, db: Session = Depends(get_db), user_
     return db_os
 
 @router.delete("/api/os/batch")
-def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
-    verificar_permissao("os.excluir", user_id, db)
+def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    verificar_permissao("os.excluir", current_user, db)
     # Limpa arquivos físicos antes de deletar do banco
     oss = db.query(models.OS).filter(models.OS.id.in_(ids)).all()
     for os_obj in oss:
@@ -269,8 +296,8 @@ def delete_os_batch(ids: List[str] = Body(...), db: Session = Depends(get_db), u
     return {"deleted_count": len(ids)}
 
 @router.delete("/api/os/{os_id}")
-def delete_os(os_id: str, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
-    verificar_permissao("os.excluir", user_id, db)
+def delete_os(os_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    verificar_permissao("os.excluir", current_user, db)
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: return {"ok": True}
     
@@ -290,15 +317,14 @@ def upload_attachments(
     os_id: str,
     files: List[UploadFile] = File(...),
     caption: str = Form("Foto Geral"),
-    x_user_id: str = Header(None),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     logging.debug(f"🚀 [DEBUG UPLOAD] Recebendo {len(files)} arquivos para OS: {os_id}, Legenda: {caption}")
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
 
-    user = db.query(models.User).filter(models.User.id == x_user_id).first()
-    uploader_name = user.name if user else "Desconhecido"
+    uploader_name = current_user.name if current_user else "Desconhecido"
 
     # --- LÓGICA DE PASTAS FÍSICAS (CORRIGIDA) ---
     # 1. Define o nome da subpasta. Padrão = "Geral"
@@ -349,15 +375,15 @@ def upload_attachments(
     return db_os
 
 @router.post("/api/os/{os_id}/start")
-def start_execution(os_id: str, x_user_id: str = Header(...), db: Session = Depends(get_db)):
-    verificar_permissao("os.executar", x_user_id, db)
+def start_execution(os_id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    verificar_permissao("os.executar", current_user, db)
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS not found")
     
-    if db_os.currentExecutorId and db_os.currentExecutorId != x_user_id:
+    if db_os.currentExecutorId and db_os.currentExecutorId != current_user.id:
         raise HTTPException(400, "OS bloqueada por outro usuário")
         
-    db_os.currentExecutorId = x_user_id
+    db_os.currentExecutorId = current_user.id
     db_os.executionStart = datetime.now(timezone.utc).isoformat()
     db_os.status = "Em Progresso"
     db_os.updatedAt = datetime.now().isoformat()
@@ -370,19 +396,14 @@ def start_execution(os_id: str, x_user_id: str = Header(...), db: Session = Depe
 def pause_execution(
     os_id: str, 
     payload: dict = Body(...), 
-    x_user_id: str = Header(...), 
+    current_user: models.User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
-    # Se finished for true, é revisão. Se for false, é pausa/execução
-    if payload.get("finished"):
-        verificar_permissao("os.revisar", x_user_id, db)
-    else:
-        verificar_permissao("os.executar", x_user_id, db)
+    # Para pausar ou finalizar a execução, o usuário deve ter permissão de executar
+    verificar_permissao("os.executar", current_user, db)
         
     db_os = db.query(models.OS).filter(models.OS.id == os_id).first()
     if not db_os: raise HTTPException(404, "OS não encontrada")
-    
-    user = db.query(models.User).filter(models.User.id == x_user_id).first()
     
     client_end = payload.get("clientEndTime")
     now_dt = datetime.fromisoformat(client_end.replace('Z', '+00:00')) if client_end else datetime.now(timezone.utc)
@@ -420,8 +441,8 @@ def pause_execution(
     
     session_log = {
         "sessionId": str(uuid4()),
-        "userId": x_user_id,
-        "userName": user.name if user else "Desconhecido",
+        "userId": current_user.id,
+        "userName": current_user.name if current_user else "Desconhecido",
         "startTime": start_iso or now_dt.isoformat(),
         "endTime": now_dt.isoformat(),
         "durationSeconds": duration,

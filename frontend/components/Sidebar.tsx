@@ -1,10 +1,10 @@
 // File: components/Sidebar.tsx
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
   LayoutDashboard, Calendar, LogOut, ChevronLeft, ChevronRight,
   CalendarDays, Factory, ClipboardList, ShieldCheck, Monitor, 
-  UserCheck, Eye, Wrench, HelpingHand, Briefcase 
+  UserCheck, Eye, Wrench, HelpingHand, Briefcase, Activity, User
 } from 'lucide-react';
 import { Role } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -25,34 +25,79 @@ const Sidebar: React.FC<SidebarProps> = ({
   setIsCollapsed,
   setModalConfig
 }) => {
-  const { user, logout } = useAuth();
+  const { user, token, logout, switchCompany } = useAuth();
   const can = useCan();
+  const [companies, setCompanies] = useState<{id: string, name: string}[]>([]);
+  const [cargos, setCargos] = useState<{id: string, nome: string}[]>([]);
+
+  useEffect(() => {
+    if (user?.is_superadmin && token) {
+      const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8001';
+      fetch(`${API_BASE}/api/empresas/`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(async res => {
+          if (!res.ok) throw new Error('Falha ao buscar empresas');
+          return res.json();
+      })
+      .then(data => {
+        if (Array.isArray(data)) setCompanies(data);
+      })
+      .catch(console.error);
+    }
+
+    if (token) {
+      const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8001';
+      fetch(`${API_BASE}/api/users/cargos`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(async res => {
+          if (!res.ok) throw new Error('Falha ao buscar cargos');
+          return res.json();
+      })
+      .then(data => {
+        if (Array.isArray(data)) {
+            const uniqueCargos = Array.from(new Map(data.map(item => [item.nome, item])).values());
+            setCargos(uniqueCargos);
+        }
+      })
+      .catch(console.error);
+    }
+  }, [user, token]);
 
   const menuItems = [
-    { path: '/kanban', label: 'Painel Kanban', icon: LayoutDashboard },
-    { path: '/calendar', label: 'Calendário', icon: Calendar },
-    { path: '/schedule', label: 'Cronograma 52 Semanas', icon: CalendarDays },
-    { path: '/plans', label: 'Planos de Manutenção', icon: ClipboardList },
-  ];
+    { path: '/kanban', label: 'Painel Kanban', icon: LayoutDashboard, permission: 'kanban.acessar' },
+    { path: '/calendar', label: 'Calendário', icon: Calendar, permission: 'calendario.acessar' },
+    { path: '/schedule', label: 'Cronograma 52 Semanas', icon: CalendarDays, permission: 'cronograma.acessar' },
+    { path: '/plans', label: 'Planos de Manutenção', icon: ClipboardList, permission: 'planos.visualizar' },
+  ].filter(item => can(item.permission));
 
-  const allRoleButtons = [
-    { role: Role.ADMIN, label: 'Administradores', icon: ShieldCheck },
-    { role: Role.OPERATOR, label: 'Operadores', icon: Monitor },
-    { role: Role.COORDINATOR, label: 'Coordenadores', icon: UserCheck },
-    { role: Role.SUPERVISOR, label: 'Supervisores', icon: Eye },
-    { role: Role.TECHNICIAN, label: 'Técnicos', icon: Wrench },
-    { role: Role.ASSISTANT, label: 'Auxiliares', icon: HelpingHand },
-    { role: Role.CLIENT, label: 'Clientes', icon: Briefcase },
-  ];
+  if (user?.is_superadmin) {
+      menuItems.push({ path: '/admin/empresas', label: 'Empresas', icon: Briefcase });
+      menuItems.push({ path: '/admin/permissoes', label: 'Permissões', icon: ShieldCheck });
+      menuItems.push({ path: '/admin/auditoria', label: 'Auditoria', icon: Activity });
+  }
 
-  const visibleRoleButtons = allRoleButtons.filter(btn => {
-      if (!user) return false;
-      if (user.role === Role.ADMIN || user.role === Role.OPERATOR) return true;
-      if (btn.role === Role.ADMIN || btn.role === Role.OPERATOR) return false;
-      return true;
-  });
+  // Fallbacks de ícones para nomes conhecidos
+  const getRoleIcon = (roleName: string) => {
+    const lower = roleName.toLowerCase();
+    if (lower.includes('admin')) return ShieldCheck;
+    if (lower.includes('opera')) return Monitor;
+    if (lower.includes('coord')) return UserCheck;
+    if (lower.includes('super')) return Eye;
+    if (lower.includes('tec') || lower.includes('téc')) return Wrench;
+    if (lower.includes('auxil')) return HelpingHand;
+    if (lower.includes('client')) return Briefcase;
+    return User; // Ícone padrão
+  };
 
-  const handleOpenUserRole = (roleFilter: Role, label: string) => {
+  const visibleRoleButtons = cargos.map(c => ({
+      role: c.nome,
+      label: c.nome.charAt(0).toUpperCase() + c.nome.slice(1),
+      icon: getRoleIcon(c.nome)
+  }));
+
+  const handleOpenUserRole = (roleFilter: string, label: string) => {
     setModalConfig({ type: 'MANAGE_USERS', data: { roleFilter, label } });
     setMobileOpen(false);
   };
@@ -62,7 +107,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     setMobileOpen(false);
   };
 
-  const canViewTeam = can('admin.acessar');
+  const canViewTeam = can('usuarios.visualizar');
+  const canViewPlants = can('usinas.visualizar');
 
   return (
     <>
@@ -91,7 +137,42 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+          {user?.is_superadmin && !isCollapsed && (
+            <div className="mb-4 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800">
+                <label className="text-xs font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider mb-2 block">Visualizando Empresa</label>
+                <select 
+                    className="w-full bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 text-sm rounded p-1.5 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={user.company_id || ''}
+                    onChange={(e) => switchCompany(e.target.value)}
+                >
+                    <option value="" disabled>Selecione uma empresa...</option>
+                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+            </div>
+          )}
+          
+          {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Operação</div>}
           {menuItems.map((item) => {
+            if (item.label === 'Empresas' && !isCollapsed) {
+                return (
+                    <React.Fragment key="admin-title">
+                        <div className="my-2 border-t border-gray-200 dark:border-gray-700" />
+                        <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mt-2">Administração</div>
+                        <NavLink
+                            to={item.path}
+                            onClick={() => setMobileOpen(false)}
+                            className={({ isActive }) => `
+                            w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors
+                            ${isActive ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}
+                            `}
+                        >
+                            <item.icon size={20} />
+                            <span className="font-medium">{item.label}</span>
+                        </NavLink>
+                    </React.Fragment>
+                );
+            }
+
             const Icon = item.icon;
             return (
               <NavLink
@@ -115,7 +196,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
           {canViewTeam && (
             <>
-              {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Equipe e Usinas</div>}
+              {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Equipes</div>}
               {visibleRoleButtons.map((roleItem) => (
                 <button
                   key={roleItem.role}
@@ -128,6 +209,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               ))}
               <div className="my-2 border-t border-gray-200 dark:border-gray-700" />
+            </>
+          )}
+
+          {canViewPlants && (
+            <>
+              {!isCollapsed && <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mt-2">Usinas</div>}
               <button
                 onClick={handleOpenPlants}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${isCollapsed ? 'justify-center' : ''}`}

@@ -1,7 +1,42 @@
 # attachments/app/core/models.py
-from sqlalchemy import Column, String, Integer, Boolean, Text, JSON, ForeignKey, Float
+from sqlalchemy import Column, String, Integer, Boolean, Text, JSON, ForeignKey, Float, DateTime
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
+import uuid
 from app.core.database import Base
+
+class Company(Base):
+    __tablename__ = "companies"
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, unique=True)
+    cnpj = Column(String, nullable=True)
+    status = Column(String, default="Ativo")
+    modulos_ativos = Column(JSON, default=list)
+    created_at = Column(DateTime, default=func.now())
+
+from sqlalchemy import UniqueConstraint
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    role_name = Column(String, index=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    permissions = Column(JSON, default=list)
+    
+    __table_args__ = (UniqueConstraint('role_name', 'company_id', name='uq_role_company'),)
+
+class AuditoriaLog(Base):
+    __tablename__ = "auditoria_logs"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    empresa_id = Column(String, index=True, nullable=True)
+    tabela = Column(String, index=True)
+    registro_id = Column(String, index=True)
+    acao = Column(String)
+    dados_antigos = Column(JSON, nullable=True)
+    dados_novos = Column(JSON, nullable=True)
+    usuario_id = Column(String, nullable=True)
+    usuario_nome = Column(String, nullable=True)
+    data_hora = Column(DateTime(timezone=True), default=func.now())
 
 class User(Base):
     __tablename__ = "users"
@@ -16,10 +51,14 @@ class User(Base):
     supervisorId = Column(String, nullable=True)
     assistantId = Column(String, nullable=True)
     plantIds = Column(JSON, default=list) 
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    is_superadmin = Column(Boolean, default=False)
+    permissions = Column(JSON, default=list)
 
 class Plant(Base):
     __tablename__ = "plants"
     id = Column(String, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
     client = Column(String)
     name = Column(String)
     stringCount = Column(Integer, default=0)
@@ -63,6 +102,7 @@ class PlantMaintenancePlan(Base):
 class OS(Base):
     __tablename__ = "os"
     id = Column(String, primary_key=True, index=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
     title = Column(String)
     description = Column(Text)
     status = Column(String)

@@ -1,11 +1,12 @@
 // File: components/Schedule52Weeks.tsx
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { OS, Role, Priority } from '../types';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import Modal from '../components/modals/Modal';
 import ScheduleOSModal from '../components/modals/ScheduleOSModal'; 
+import BulkReassignModal from '../components/modals/BulkReassignModal';
 import { DashboardContextType } from './Dashboard';
 import { Filter, ChevronDown, ChevronUp, Clock } from 'lucide-react'; // ✅ Ícones novos
 import { useOSList } from '../components/hooks/useOSList';
@@ -59,7 +60,28 @@ const Schedule52Weeks: React.FC = () => {
   // ✅ NOVO: Estado para controlar visibilidade dos filtros no mobile
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
 
+  useEffect(() => {
+    if (user?.role === Role.CLIENT && user.name && !selectedClient) {
+      setSelectedClient(user.name);
+    }
+  }, [user, selectedClient]);
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'Urgente': return 'bg-red-500 hover:bg-red-600';
+      case 'Alta': return 'bg-orange-500 hover:bg-orange-600';
+      case 'Média': return 'bg-yellow-500 hover:bg-yellow-600';
+      case 'Baixa': return 'bg-green-500 hover:bg-green-600';
+      default: return 'bg-gray-500';
+    }
+  };
+
+  const getPlantName = (plantId: string) => {
+    return plants.find(p => p.id === plantId)?.name || plantId;
+  };
+
   const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
+  const [isReassignModalOpen, setIsReassignModalOpen] = useState(false);
   const [moreInfoModal, setMoreInfoModal] = useState<{ isOpen: boolean; title: string; items: OS[] }>({
       isOpen: false, title: '', items: []
   });
@@ -197,20 +219,6 @@ const Schedule52Weeks: React.FC = () => {
       });
   };
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'Urgente': return 'bg-red-500 hover:bg-red-600';
-      case 'Alta': return 'bg-orange-500 hover:bg-orange-600';
-      case 'Média': return 'bg-yellow-500 hover:bg-yellow-600';
-      case 'Baixa': return 'bg-green-500 hover:bg-green-600';
-      default: return 'bg-gray-500';
-    }
-  };
-
-  const getPlantName = (plantId: string) => {
-    return plants.find(p => p.id === plantId)?.name || plantId;
-  };
-
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   };
@@ -268,10 +276,13 @@ const Schedule52Weeks: React.FC = () => {
                                     <input type="checkbox" checked={selectedOSIds.length === visibleOS.length && visibleOS.length > 0} onChange={handleSelectAll} className="rounded text-blue-600 w-4 h-4" />
                                     <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Todos</span>
                                 </label>
-                                <button onClick={handleDeleteSelected} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 disabled:bg-gray-400">
+                                <button onClick={handleDeleteSelected} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded shadow-sm hover:bg-red-700 disabled:bg-gray-400" title="Excluir selecionadas">
                                     🗑️
                                 </button>
-                                <button onClick={() => setIsSelectionMode(false)} className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-200 rounded shadow-sm hover:bg-gray-300">
+                                <button onClick={() => setIsReassignModalOpen(true)} disabled={selectedOSIds.length === 0} className="px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded shadow-sm hover:bg-purple-700 disabled:bg-gray-400 flex items-center gap-1" title="Reatribuir OSs">
+                                    🔁 <span className="hidden sm:inline">Reatribuir</span>
+                                </button>
+                                <button onClick={() => { setIsSelectionMode(false); setSelectedOSIds([]); }} className="px-4 py-2 text-sm font-bold text-gray-700 bg-gray-200 rounded shadow-sm hover:bg-gray-300">
                                     X
                                 </button>
                             </div>
@@ -296,7 +307,7 @@ const Schedule52Weeks: React.FC = () => {
                 lg:flex lg:mt-0 lg:border-none lg:pt-0
             `}>
                 <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} className={selectClass}>{years.map(y => <option key={y} value={y}>{y}</option>)}</select>
-                <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass}><option value="">Todos Clientes</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                <select value={selectedClient} onChange={e => { setSelectedClient(e.target.value); setSelectedPlant(''); }} className={selectClass} disabled={user?.role === Role.CLIENT}><option value="">Todos Clientes</option>{availableClients.map(c => <option key={c} value={c}>{c}</option>)}</select>
                 <select value={selectedPlant} onChange={e => setSelectedPlant(e.target.value)} className={selectClass} disabled={!selectedClient && plants.length > 20}><option value="">Todas Usinas</option>{availablePlants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
                 <select value={selectedPriority} onChange={e => setSelectedPriority(e.target.value)} className={selectClass}><option value="">Todas Prioridades</option>{Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}</select>
                 <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} className={selectClass}><option value="">Todos Ativos</option>{uniqueAssets.map(a => <option key={a} value={a}>{a}</option>)}</select>
@@ -307,8 +318,9 @@ const Schedule52Weeks: React.FC = () => {
       </div>
 
       {/* 2. ÁREA DE ROLAGEM E TABELA RESPONSIVA */}
-      <div className="flex-1 overflow-auto p-4 scrollbar-thin relative bg-white dark:bg-gray-800">
-        <table className="w-max min-w-full border-collapse text-sm">
+      <div className="flex-1 p-4 bg-gray-50 dark:bg-gray-900 overflow-hidden flex flex-col">
+        <div className="flex-1 overflow-auto scrollbar-thin relative bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+          <table className="w-max min-w-full border-collapse text-sm">
           <thead className="sticky top-0 z-20 shadow-sm">
              <tr>
                <th className="sticky left-0 z-30 bg-gray-200 dark:bg-gray-700 p-2 border border-gray-300 dark:border-gray-600 w-48 text-left text-gray-800 dark:text-gray-200">
@@ -324,8 +336,8 @@ const Schedule52Weeks: React.FC = () => {
           </thead>
           <tbody>
             {plantsInView.map(plantId => (
-                 <tr key={plantId} className="hover:bg-gray-50 dark:hover:bg-gray-750">
-                   <td className="sticky left-0 z-10 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 p-2 font-bold text-gray-800 dark:text-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                 <tr key={plantId} className="group hover:bg-gray-50 dark:hover:bg-gray-750">
+                   <td className="sticky left-0 z-10 bg-white dark:bg-gray-800 group-hover:bg-gray-50 dark:group-hover:bg-gray-750 border border-gray-300 dark:border-gray-600 p-2 font-bold text-gray-800 dark:text-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                       {getPlantName(plantId)}
                    </td>
                    {weeks.map(w => {
@@ -377,6 +389,7 @@ const Schedule52Weeks: React.FC = () => {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* MODAL VER MAIS (MANTIDO IGUAL) */}
@@ -411,6 +424,17 @@ const Schedule52Weeks: React.FC = () => {
       <ScheduleOSModal 
         isOpen={isSchedulerOpen}
         onClose={() => setIsSchedulerOpen(false)}
+      />
+
+      <BulkReassignModal 
+        isOpen={isReassignModalOpen}
+        onClose={() => {
+          setIsReassignModalOpen(false);
+          setSelectedOSIds([]);
+          setIsSelectionMode(false);
+        }}
+        selectedOSIds={selectedOSIds}
+        visibleOSList={visibleOS}
       />
 
     </div>

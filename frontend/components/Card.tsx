@@ -5,6 +5,7 @@ import React from 'react';
 import { OS, Priority, Role } from '../types';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useCan } from './hooks/useCan';
 
 interface CardProps {
     os: OS;
@@ -21,13 +22,14 @@ const PRIORITY_COLORS: { [key in Priority]: string } = {
 const Card: React.FC<CardProps> = ({ os, onCardClick }) => {
     const { plants, users, deleteOSBatch } = useData();
     const { user } = useAuth();
+    const can = useCan();
     
     const plant = plants.find(p => p.id === os.plantId);
     const technician = users.find(u => u.id === os.technicianId);
     const [osId, ...rest] = os.title.split(' - ');
     const osActivity = rest.join(' - ');
 
-    const canDelete = user?.role === Role.ADMIN || user?.role === Role.OPERATOR;
+    const canDelete = can('os.excluir');
 
     const handleDelete = (e: React.MouseEvent) => {
         e.stopPropagation();
